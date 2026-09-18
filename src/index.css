@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: 5 150 105;
+    --color-primary-dark: 4 120 87;
+  }
+  
+  html {
+    font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Custom Sleek Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.6);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.3);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.6);
+  }
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.glass-card:hover {
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.glass-input {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+}
+.glass-input:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+  outline: none;
+}
+
+/* Comfortable light mode; class is applied to the application shell. */
+.app-theme-light { background: #f1f5f9 !important; color: #0f172a !important; }
+.app-theme-light .glass-panel { background: rgba(255,255,255,.92); border-color: #cbd5e1; }
+.app-theme-light .glass-card, .app-theme-light .bg-slate-900\/60, .app-theme-light .bg-slate-900\/80 { background: #f8fafc !important; }
+.app-theme-light [class*="bg-slate-900"], .app-theme-light [class*="bg-slate-950"], .app-theme-light [class*="bg-slate-850"] { background-color: #f8fafc !important; }
+.app-theme-light [class*="from-slate-900"], .app-theme-light [class*="via-slate"], .app-theme-light [class*="to-slate"] { --tw-gradient-from: #f8fafc var(--tw-gradient-from-position) !important; --tw-gradient-to: #e2e8f0 var(--tw-gradient-to-position) !important; }
+.app-theme-light .glass-input { background: #fff; color: #0f172a; border-color: #cbd5e1; }
+.app-theme-light .text-white, .app-theme-light .text-slate-100 { color: #0f172a !important; }
+.app-theme-light .text-slate-200, .app-theme-light .text-slate-300 { color: #334155 !important; }
+.app-theme-light .text-slate-400, .app-theme-light .text-slate-500 { color: #64748b !important; }
+.app-theme-light .border-slate-800, .app-theme-light .border-slate-700 { border-color: #cbd5e1 !important; }
+.app-theme-light select option { background: #fff; color: #0f172a; }
+
+/* Print Styles for Receipts and Statements */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #printable-area, #printable-area * {
+    visibility: visible !important;
+  }
+  #printable-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    background: white !important;
+    color: black !important;
+    padding: 20px !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}

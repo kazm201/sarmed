@@ -1,0 +1,21 @@
+import React, { useMemo } from 'react';
+import { BarChart3, Users, WalletCards, TrendingDown, TrendingUp, Clock3, CircleCheck } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { useData } from '../context/DataContext';
+
+export const StatisticsPage = () => {
+  const { settings } = useAuth(); const { customers, transactions, totalDebt, pendingApprovalsCount } = useData();
+  const stats = useMemo(() => {
+    const approved = transactions.filter((t) => t.status === 'approved');
+    const debts = approved.filter((t) => t.type === 'debt'); const payments = approved.filter((t) => t.type === 'payment');
+    const sum = (list) => list.reduce((total, item) => total + (Number(item.amount) || 0), 0);
+    const today = new Date().toISOString().split('T')[0];
+    return { approved: approved.length, debtValue: sum(debts), paymentValue: sum(payments), todayDebt: sum(debts.filter((t) => t.date === today)), todayPayment: sum(payments.filter((t) => t.date === today)), average: customers.length ? totalDebt / customers.length : 0, paidCustomers: customers.filter((c) => !c.currentDebt).length, pendingValue: sum(transactions.filter((t) => t.status === 'pending')) };
+  }, [customers, transactions, totalDebt]);
+  const cards = [
+    ['إجمالي الديون القائمة', totalDebt, TrendingDown, 'text-rose-400'], ['إجمالي الديون المعتمدة', stats.debtValue, WalletCards, 'text-amber-400'], ['إجمالي التسديدات المعتمدة', stats.paymentValue, TrendingUp, 'text-emerald-400'], ['متوسط دين الزبون', stats.average, BarChart3, 'text-teal-400']
+  ];
+  return <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-200"><header className="pb-4 border-b border-slate-800"><h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2"><BarChart3 className="w-6 h-6 text-teal-400" />الإحصاءات الشاملة</h2><p className="text-xs sm:text-sm text-slate-400 mt-1">ملخص دقيق مبني على الحركات المعتمدة فقط، ويتحدث تلقائياً عند اعتماد أي طلب.</p></header><div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">{cards.map(([label, value, Icon, color]) => <div key={label} className="glass-card rounded-3xl p-5 border border-slate-800"><div className="flex justify-between items-center"><span className="text-xs font-bold text-slate-400">{label}</span><Icon className={`w-5 h-5 ${color}`} /></div><strong className="block mt-4 text-2xl font-black text-white">{Number(value).toLocaleString()} <small className="text-xs text-slate-400">{settings.currency}</small></strong></div>)}</div><div className="grid grid-cols-1 md:grid-cols-2 gap-5"><section className="glass-panel rounded-3xl p-6 border border-slate-800 space-y-4"><h3 className="text-base font-bold text-white">ملخص اليوم</h3><div className="grid grid-cols-2 gap-3"><Metric label="ديون اليوم" value={stats.todayDebt} currency={settings.currency} /><Metric label="تسديدات اليوم" value={stats.todayPayment} currency={settings.currency} /><Metric label="طلبات معلقة" value={pendingApprovalsCount} /><Metric label="قيمة الطلبات المعلقة" value={stats.pendingValue} currency={settings.currency} /></div></section><section className="glass-panel rounded-3xl p-6 border border-slate-800 space-y-3"><h3 className="text-base font-bold text-white">مؤشرات السجل</h3><Line icon={Users} label="إجمالي الزبائن" value={`${customers.length} زبون`} /><Line icon={CircleCheck} label="زبائن بلا ديون" value={`${stats.paidCustomers} زبون`} /><Line icon={Clock3} label="حركات معتمدة" value={`${stats.approved} حركة`} /><Line icon={TrendingDown} label="زبائن لديهم رصيد" value={`${customers.filter((c) => c.currentDebt > 0).length} زبون`} /></section></div></div>;
+};
+const Metric = ({ label, value, currency }) => <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800"><span className="text-[11px] text-slate-400 block">{label}</span><strong className="text-lg text-white block mt-1">{Number(value).toLocaleString()} {currency && <small className="text-[10px] text-slate-400">{currency}</small>}</strong></div>;
+const Line = ({ icon: Icon, label, value }) => <div className="flex justify-between items-center p-3 rounded-xl bg-slate-900/60"><span className="flex items-center gap-2 text-xs text-slate-300"><Icon className="w-4 h-4 text-emerald-400" />{label}</span><strong className="text-xs text-white">{value}</strong></div>;
