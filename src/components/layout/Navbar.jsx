@@ -10,6 +10,8 @@ import {
   LogOut,
   Wifi,
   WifiOff,
+  Cloud,
+  CloudOff,
   RefreshCw,
   Store,
   UserCheck,
@@ -30,6 +32,8 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
     clearAllNotifications,
     isSyncing,
     isOnline,
+    cloudStatus,
+    syncAllDataToCloud,
     pendingApprovalsCount
   } = useData();
 
@@ -85,18 +89,42 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
               </h1>
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <span className="flex items-center gap-1">
-                  {isOnline ? (
-                    <Wifi className="w-3 h-3 text-emerald-400" />
+                  {cloudStatus === 'connected' ? (
+                    <>
+                      <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400 font-medium">السحابة متصلة</span>
+                    </>
+                  ) : cloudStatus === 'needs_activation' ? (
+                    <>
+                      <CloudOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                      <span className="text-amber-400 font-medium">بانتظار تفعيل السحابة</span>
+                    </>
+                  ) : isOnline ? (
+                    <>
+                      <Wifi className="w-3 h-3 text-teal-400" />
+                      <span>متصل بالإنترنت</span>
+                    </>
                   ) : (
-                    <WifiOff className="w-3 h-3 text-rose-400" />
+                    <>
+                      <WifiOff className="w-3 h-3 text-rose-400" />
+                      <span>محفوظ محلياً</span>
+                    </>
                   )}
-                  {isOnline ? 'متزامن لايف' : 'محفوظ محلياً'}
                 </span>
-                {isSyncing && (
+                {isSyncing ? (
                   <span className="flex items-center gap-1 text-teal-400">
                     <RefreshCw className="w-3 h-3 animate-spin" />
                     مزامنة...
                   </span>
+                ) : (
+                  <button
+                    onClick={() => syncAllDataToCloud().catch(() => {})}
+                    className="p-1 rounded bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-emerald-400 transition-all text-[11px] flex items-center gap-1"
+                    title="مزامنة فورية مع السحابة وجميع الأجهزة"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span className="hidden sm:inline">مزامنة الآن</span>
+                  </button>
                 )}
               </div>
             </div>

@@ -16,14 +16,30 @@ import {
   User,
   Sliders,
   RefreshCw,
-  Server
+  Server,
+  Cloud,
+  CloudOff,
+  ExternalLink,
+  ShieldAlert
 } from 'lucide-react';
 import { getActiveFirebaseConfig, saveFirebaseConfig } from '../services/firebase';
 
 export const SettingsPage = ({ setActivePage }) => {
   const { settings, updateSettings, currentUser } = useAuth();
-  const { customers, transactions, notifications, resetStatisticsOnly, resetAllData } = useData();
+  const {
+    customers,
+    transactions,
+    notifications,
+    resetStatisticsOnly,
+    resetAllData,
+    cloudStatus,
+    cloudError,
+    lastCloudSyncTime,
+    syncAllDataToCloud,
+    isSyncing
+  } = useData();
   const [auditResult, setAuditResult] = useState(null);
+  const [syncStatusResult, setSyncStatusResult] = useState(null);
 
   // Manager Credentials Form
   const [managerName, setManagerName] = useState(settings.managerName || 'سرمد مؤيد');
@@ -340,15 +356,101 @@ export const SettingsPage = ({ setActivePage }) => {
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Server className="w-4 h-4 text-teal-400" />
-            <span>3. إعدادات وقاعدة بيانات Firebase المباشرة</span>
+            <span>3. حالة المزامنة السحابية وقاعدة بيانات Firebase</span>
           </h3>
-          <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-            تخزين سحابي ومحلي متزامن
+          <span className={`text-[11px] px-2.5 py-0.5 rounded-full border ${
+            cloudStatus === 'connected'
+              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              : cloudStatus === 'needs_activation'
+              ? 'bg-amber-500/10 text-amber-300 border-amber-500/30 animate-pulse'
+              : 'bg-slate-800 text-slate-400 border-slate-700'
+          }`}>
+            {cloudStatus === 'connected' ? 'السحابة متصلة ومزامنة' : cloudStatus === 'needs_activation' ? 'بانتظار تفعيل Firestore' : 'وضع محلي'}
           </span>
         </div>
 
+        {/* Live Cloud Status Box */}
+        <div className={`p-4 rounded-2xl border ${
+          cloudStatus === 'connected'
+            ? 'bg-emerald-950/30 border-emerald-800/60'
+            : cloudStatus === 'needs_activation'
+            ? 'bg-amber-950/40 border-amber-600/60'
+            : 'bg-slate-900/60 border-slate-800'
+        } space-y-3`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className={`p-2 rounded-xl mt-0.5 ${
+                cloudStatus === 'connected'
+                  ? 'bg-emerald-500/20 text-emerald-400'
+                  : cloudStatus === 'needs_activation'
+                  ? 'bg-amber-500/20 text-amber-400'
+                  : 'bg-slate-800 text-slate-400'
+              }`}>
+                {cloudStatus === 'connected' ? <Cloud className="w-5 h-5" /> : <CloudOff className="w-5 h-5" />}
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white">
+                  {cloudStatus === 'connected'
+                    ? 'المزامنة السحابية نشطة لجميع الأجهزة'
+                    : cloudStatus === 'needs_activation'
+                    ? 'قاعدة بيانات Firestore بحاجة إلى تفعيل بنقرة واحدة'
+                    : 'حالة الاتصال بالسحابة'}
+                </h4>
+                <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
+                  {cloudStatus === 'connected'
+                    ? `جميع بيانات الزبائن والديون تتزامن تلقائياً وبشكل فوري بين جميع الهواتف والأجهزة. آخر مزامنة: ${lastCloudSyncTime || 'الآن'}.`
+                    : cloudStatus === 'needs_activation'
+                    ? 'المشروع موجود ولكن لم يتم الضغط على إنشاء قاعدة بيانات Firestore بعد. اضغط على الزر أدناه لتفعيلها في دقيقة واحدة لكي تظهر بياناتك على كل جهاز فورياً.'
+                    : 'التطبيق يعمل ومحمي بالتخزين المحلي المؤقت على هذا الجهاز.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {cloudStatus === 'needs_activation' && (
+            <div className="pt-2 border-t border-amber-800/40 flex flex-wrap gap-2">
+              <a
+                href="https://console.firebase.google.com/project/sarmed-fef02/firestore"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-md"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>فتح صفحة Firestore وتفعيلها الآن</span>
+              </a>
+            </div>
+          )}
+
+          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={async () => {
+                try {
+                  setSyncStatusResult(null);
+                  const res = await syncAllDataToCloud();
+                  setSyncStatusResult({ success: true, message: `تمت مزامنة ورفع ${res.count} سجل مع السحابة بنجاح!` });
+                  setTimeout(() => setSyncStatusResult(null), 5000);
+                } catch (err) {
+                  setSyncStatusResult({ success: false, message: err.message || 'فشلت المزامنة' });
+                }
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-bold text-xs transition-all active:scale-95"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'جاري المزامنة مع السحابة...' : 'مزامنة ورفع جميع البيانات إلى السحابة الآن'}</span>
+            </button>
+
+            {syncStatusResult && (
+              <span className={`text-xs font-bold ${syncStatusResult.success ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {syncStatusResult.message}
+              </span>
+            )}
+          </div>
+        </div>
+
         <p className="text-xs text-slate-400">
-          يمكنك ربط تطبيقك بمشروع Firebase الخاص بك مباشرة عن طريق تعبئة المفاتيح أدناه (أو تركها لتعمل مع التخزين المحلي التلقائي):
+          بيانات مشروع Firebase النشط (المشروع الافتراضي المبرمج مسبقاً: <strong>sarmed-fef02</strong>):
         </p>
 
         <form onSubmit={handleSaveFirebase} className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">

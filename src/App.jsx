@@ -15,6 +15,7 @@ import { StatisticsPage } from './pages/StatisticsPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { FirebaseStoragePage } from './pages/FirebaseStoragePage';
 import { WorkerDebtLedgerPage } from './pages/WorkerDebtLedgerPage';
+import { CloudSyncBanner } from './components/common/CloudSyncBanner';
 import {
   LayoutDashboard,
   PlusCircle,
@@ -68,6 +69,9 @@ const MainLayout = () => {
 
   return (
     <div className={`min-h-screen app-theme-${settings.theme || 'dark'} bg-slate-950 text-slate-100 flex flex-col selection:bg-emerald-500 selection:text-white pb-16 lg:pb-0`}>
+      {/* Cloud Sync Status Alert Banner */}
+      <CloudSyncBanner />
+
       {/* Top Navbar */}
       <Navbar
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}

@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAnalytics } from 'firebase/analytics';
 import {
   initializeFirestore,
+  getFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
   collection,
@@ -84,7 +85,12 @@ export const initFirebase = () => {
       });
       console.log('✅ Firestore مفعّل مع التخزين المحلي التلقائي (IndexedDB)');
     } catch (fsErr) {
-      console.warn('Firestore initialization notice:', fsErr);
+      try {
+        db = getFirestore(app);
+        console.log('✅ Firestore مفعّل عبر getFirestore القياسي');
+      } catch (fallbackErr) {
+        console.warn('Firestore initialization notice:', fsErr, fallbackErr);
+      }
     }
   } catch (err) {
     console.warn('Firebase init notice:', err);

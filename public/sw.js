@@ -1,16 +1,24 @@
-const CACHE_NAME = 'sarmed-supermarket-v1';
+const CACHE_NAME = 'sarmed-supermarket-v3';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icon.svg',
-  '/favicon.ico'
+  './',
+  './index.html',
+  './manifest.json',
+  './icon.svg',
+  './favicon.ico',
+  './pwa-192x192.png',
+  './pwa-512x512.png'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      for (const asset of STATIC_ASSETS) {
+        try {
+          await cache.add(asset);
+        } catch (e) {
+          console.info('SW: skipped pre-caching asset:', asset);
+        }
+      }
     })
   );
   self.skipWaiting();
@@ -36,12 +44,18 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
   // Let firestore / api network requests handle their own offline persistence
-  if (event.request.url.includes('firestore.googleapis.com') || event.request.url.includes('firebase')) {
+  const url = event.request.url;
+  if (
+    url.includes('firestore.googleapis.com') ||
+    url.includes('firebase') ||
+    url.includes('identitytoolkit') ||
+    url.includes('google-analytics')
+  ) {
     return;
   }
 
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
+    caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
       if (cachedResponse) {
         // Fetch new version in background (stale-while-revalidate)
         fetch(event.request).then((networkResponse) => {
@@ -53,8 +67,9 @@ self.addEventListener('fetch', (event) => {
         }).catch(() => {});
         return cachedResponse;
       }
+
       return fetch(event.request).then((networkResponse) => {
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+        if (!networkResponse || networkResponse.status !== 200) {
           return networkResponse;
         }
         const responseToCache = networkResponse.clone();
@@ -62,10 +77,16 @@ self.addEventListener('fetch', (event) => {
           cache.put(event.request, responseToCache);
         });
         return networkResponse;
-      }).catch(() => {
+      }).catch(async () => {
         // Offline fallback for navigation requests
         if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
+          const cache = await caches.open(CACHE_NAME);
+          return (
+            (await cache.match('./index.html')) ||
+            (await cache.match('index.html')) ||
+            (await cache.match('./')) ||
+            (await cache.match('/'))
+          );
         }
       });
     })
@@ -85,13 +106,13 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body,
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: './icon.svg',
+    badge: './icon.svg',
     vibrate: [100, 50, 100],
     data: {
       dateOfArrival: Date.now(),
       primaryKey: 1,
-      url: data.url || '/'
+      url: './'
     }
   };
 
@@ -105,12 +126,12 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     clients.matchAll({ type: 'window' }).then((clientList) => {
       for (const client of clientList) {
-        if (client.url === '/' && 'focus' in client) {
+        if ('focus' in client) {
           return client.focus();
         }
       }
       if (clients.openWindow) {
-        return clients.openWindow(event.notification.data.url || '/');
+        return clients.openWindow('./');
       }
     })
   );

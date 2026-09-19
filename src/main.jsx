@@ -6,13 +6,14 @@ import './index.css';
 // Register PWA Service Worker
 if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
   window.addEventListener('load', () => {
+    const swUrl = `${import.meta.env.BASE_URL}sw.js`;
     navigator.serviceWorker
-      .register('/sw.js')
+      .register(swUrl)
       .then((reg) => {
         console.log('ServiceWorker registered with scope:', reg.scope);
       })
       .catch((err) => {
-        console.info('ServiceWorker registration skipped in dev:', err);
+        console.info('ServiceWorker registration skipped:', err);
       });
   });
 }

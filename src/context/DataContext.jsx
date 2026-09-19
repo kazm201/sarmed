@@ -54,11 +54,20 @@ export const DataProvider = ({ children }) => {
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [cloudStatus, setCloudStatus] = useState('connecting'); // 'connecting' | 'connected' | 'needs_activation' | 'error' | 'offline'
+  const [cloudError, setCloudError] = useState(null);
+  const [lastCloudSyncTime, setLastCloudSyncTime] = useState(null);
 
   // Monitor Network Online/Offline Status
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      if (cloudStatus === 'offline') setCloudStatus('connecting');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setCloudStatus('offline');
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -67,7 +76,7 @@ export const DataProvider = ({ children }) => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [cloudStatus]);
 
   // Save to persistent storage whenever state changes
   useEffect(() => {
@@ -96,7 +105,10 @@ export const DataProvider = ({ children }) => {
 
   // Firestore Realtime Synchronization (When db is initialized and live)
   useEffect(() => {
-    if (!db) return;
+    if (!db) {
+      setCloudStatus('offline');
+      return;
+    }
 
     let unsubCustomers = () => {};
     let unsubTransactions = () => {};
@@ -105,50 +117,116 @@ export const DataProvider = ({ children }) => {
     try {
       setIsSyncing(true);
 
-      // Listen to Customers Collection
-      const custQuery = query(collection(db, 'customers'), orderBy('name', 'asc'));
+      // 1. Listen to Customers Collection (No hardcoded orderBy to avoid missing records or index requirements)
+      const custCollection = collection(db, 'customers');
       unsubCustomers = onSnapshot(
-        custQuery,
+        custCollection,
         (snapshot) => {
+          setCloudStatus('connected');
+          setCloudError(null);
+          setLastCloudSyncTime(new Date().toLocaleTimeString('ar-IQ'));
+          setIsSyncing(false);
+
           if (!snapshot.empty) {
             const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+            list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+
+            // Push any customers existing in local buffer that are missing in cloud
+            try {
+              const localSaved = JSON.parse(localStorage.getItem(LOCAL_CUSTOMERS_KEY) || '[]');
+              const missingOnRemote = localSaved.filter((lc) => !list.some((rc) => rc.id === lc.id));
+              if (missingOnRemote.length > 0) {
+                console.log('🔄 رفع زبائن محليين إلى السحابة:', missingOnRemote.length);
+                missingOnRemote.forEach((c) => {
+                  void setDoc(doc(db, 'customers', c.id), c).catch(() => {});
+                });
+              }
+            } catch (e) {}
+
             setCustomers(list);
+          } else {
+            // Snapshot is empty: If local storage has customers, upload them all to cloud!
+            try {
+              const localSaved = JSON.parse(localStorage.getItem(LOCAL_CUSTOMERS_KEY) || '[]');
+              if (localSaved.length > 0) {
+                console.log('🔄 رفع جميع الزبائن إلى السحابة لأول مرة:', localSaved.length);
+                localSaved.forEach((c) => {
+                  void setDoc(doc(db, 'customers', c.id), c).catch(() => {});
+                });
+              }
+            } catch (e) {}
           }
-          setIsSyncing(false);
         },
         (error) => {
-          console.info('Firestore offline/fallback mode for customers:', error.message);
+          console.warn('Firestore customers listener error:', error.code, error.message);
           setIsSyncing(false);
+          if (
+            error.code === 'permission-denied' ||
+            error.message?.includes('PERMISSION_DENIED') ||
+            error.message?.includes('not been used in project') ||
+            error.message?.includes('disabled')
+          ) {
+            setCloudStatus('needs_activation');
+            setCloudError('قاعدة بيانات Cloud Firestore بحاجة لإنشاء وتفعيل في لوحة تحكم Firebase');
+          } else {
+            setCloudStatus('error');
+            setCloudError(error.message);
+          }
         }
       );
 
-      // Listen to Transactions Collection
-      const transQuery = query(collection(db, 'transactions'), orderBy('createdAt', 'desc'));
+      // 2. Listen to Transactions Collection
+      const transCollection = collection(db, 'transactions');
       unsubTransactions = onSnapshot(
-        transQuery,
+        transCollection,
         (snapshot) => {
           if (!snapshot.empty) {
             const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+            list.sort((a, b) => new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0));
+
+            // Sync any local transactions not yet in cloud
+            try {
+              const localSaved = JSON.parse(localStorage.getItem(LOCAL_TRANSACTIONS_KEY) || '[]');
+              const missingOnRemote = localSaved.filter((lt) => !list.some((rt) => rt.id === lt.id));
+              if (missingOnRemote.length > 0) {
+                console.log('🔄 رفع حركات مالية محلية إلى السحابة:', missingOnRemote.length);
+                missingOnRemote.forEach((t) => {
+                  void setDoc(doc(db, 'transactions', t.id), t).catch(() => {});
+                });
+              }
+            } catch (e) {}
+
             setTransactions(list);
+          } else {
+            try {
+              const localSaved = JSON.parse(localStorage.getItem(LOCAL_TRANSACTIONS_KEY) || '[]');
+              if (localSaved.length > 0) {
+                console.log('🔄 رفع الحركات المالية إلى السحابة لأول مرة:', localSaved.length);
+                localSaved.forEach((t) => {
+                  void setDoc(doc(db, 'transactions', t.id), t).catch(() => {});
+                });
+              }
+            } catch (e) {}
           }
         },
         (error) => {
-          console.info('Firestore offline/fallback mode for transactions:', error.message);
+          console.warn('Firestore transactions listener notice:', error.message);
         }
       );
 
-      // Listen to Notifications Collection
-      const notifQuery = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
+      // 3. Listen to Notifications Collection
+      const notifCollection = collection(db, 'notifications');
       unsubNotifications = onSnapshot(
-        notifQuery,
+        notifCollection,
         (snapshot) => {
           if (!snapshot.empty) {
             const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+            list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
             setNotifications(list);
           }
         },
         (error) => {
-          console.info('Firestore offline/fallback mode for notifications:', error.message);
+          console.info('Firestore notifications offline/fallback mode');
         }
       );
     } catch (err) {
@@ -618,6 +696,58 @@ export const DataProvider = ({ children }) => {
     }
   };
 
+  // Full Manual or Automatic Cloud Synchronization
+  const syncAllDataToCloud = async () => {
+    if (!db) throw new Error('خدمة Firebase غير مهيأة');
+    setIsSyncing(true);
+    let count = 0;
+    try {
+      // 1. Sync Settings
+      if (settings) {
+        await setDoc(doc(db, 'app', 'settings'), settings, { merge: true });
+      }
+
+      // 2. Sync Customers
+      for (const cust of customers) {
+        await setDoc(doc(db, 'customers', cust.id), cust, { merge: true });
+        count++;
+      }
+
+      // 3. Sync Transactions
+      for (const tx of transactions) {
+        await setDoc(doc(db, 'transactions', tx.id), tx, { merge: true });
+        count++;
+      }
+
+      // 4. Sync Notifications
+      for (const notif of notifications) {
+        await setDoc(doc(db, 'notifications', notif.id), notif, { merge: true });
+      }
+
+      setCloudStatus('connected');
+      setCloudError(null);
+      setLastCloudSyncTime(new Date().toLocaleTimeString('ar-IQ'));
+      notificationService.playChime('success');
+      return { success: true, count };
+    } catch (err) {
+      console.warn('Cloud sync error:', err);
+      if (
+        err.message?.includes('PERMISSION_DENIED') ||
+        err.message?.includes('not been used in project') ||
+        err.code === 'permission-denied'
+      ) {
+        setCloudStatus('needs_activation');
+        setCloudError('قاعدة بيانات Cloud Firestore بحاجة لإنشاء وتفعيل في لوحة تحكم Firebase');
+      } else {
+        setCloudStatus('error');
+        setCloudError(err.message || 'فشلت المزامنة مع السحابة');
+      }
+      throw err;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Computed Financial Metrics & Stats
   const totalDebt = customers.reduce((acc, c) => acc + (parseFloat(c.currentDebt) || 0), 0);
   const totalCustomers = customers.length;
@@ -660,6 +790,11 @@ export const DataProvider = ({ children }) => {
         unreadNotificationsCount,
         isSyncing,
         isOnline,
+        cloudStatus,
+        cloudError,
+        lastCloudSyncTime,
+        isCloudConnected: cloudStatus === 'connected',
+        syncAllDataToCloud,
         totalDebt,
         totalCustomers,
         customersWithDebt,
