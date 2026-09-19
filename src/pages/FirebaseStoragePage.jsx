@@ -21,10 +21,13 @@ import { useData } from '../context/DataContext';
 
 export const FirebaseStoragePage = ({ setActivePage }) => {
   const { isManager, settings } = useAuth();
-  const { customers, transactions, notifications } = useData();
+  const { customers, transactions, notifications, clearAllNotifications } = useData();
 
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState('');
   const [cleanedNotice, setCleanedNotice] = useState('');
+  const [isCleaning, setIsCleaning] = useState(false);
 
   // Accurately calculate byte size of strings/objects
   const calculateBytes = (data) => {
@@ -110,15 +113,34 @@ export const FirebaseStoragePage = ({ setActivePage }) => {
     };
   }, [customers, transactions, notifications, refreshKey]);
 
-  // Handle Cache Cleaning
-  const handleClearLocalCache = () => {
-    try {
-      localStorage.removeItem('sarmed_notifications_db');
-      setCleanedNotice('تم تنظيف الذاكرة المؤقتة للإشعارات بنجاح!');
+  // Handle Refresh button — shows spinner + success toast
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    setRefreshNotice('');
+    // Give it 800ms to visually spin, then update
+    setTimeout(() => {
       setRefreshKey((prev) => prev + 1);
-      setTimeout(() => setCleanedNotice(''), 4000);
+      setIsRefreshing(false);
+      setRefreshNotice('تم تحديث قياسات التخزين بنجاح!');
+      setTimeout(() => setRefreshNotice(''), 3500);
+    }, 800);
+  };
+
+  // Handle Cache Cleaning — clears ALL notifications from state + Firebase
+  const handleClearLocalCache = async () => {
+    setIsCleaning(true);
+    try {
+      // clearAllNotifications clears state, localStorage cache, and Firebase collection
+      clearAllNotifications();
+      // Also explicitly remove localStorage key just in case
+      localStorage.removeItem('sarmed_notifications_db');
+      setCleanedNotice('تم تنظيف كاش الإشعارات القديمة وحذفها بنجاح!');
+      setRefreshKey((prev) => prev + 1);
+      setTimeout(() => setCleanedNotice(''), 4500);
     } catch (e) {
       alert('تعذر تنظيف الذاكرة المؤقتة');
+    } finally {
+      setIsCleaning(false);
     }
   };
 
@@ -161,18 +183,30 @@ export const FirebaseStoragePage = ({ setActivePage }) => {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setRefreshKey((prev) => prev + 1)}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all active:scale-95"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all active:scale-95 disabled:opacity-60"
           >
-            <RefreshCw className="w-4 h-4 text-emerald-400" />
-            <span>تحديث القياس</span>
+            <RefreshCw
+              className={`w-4 h-4 text-emerald-400 transition-transform duration-700 ${
+                isRefreshing ? 'animate-spin' : ''
+              }`}
+            />
+            <span>{isRefreshing ? 'جارٍ التحديث...' : 'تحديث القياس'}</span>
           </button>
         </div>
       </div>
 
+      {/* Success Notices */}
+      {refreshNotice && (
+        <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-in fade-in duration-300">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{refreshNotice}</span>
+        </div>
+      )}
       {cleanedNotice && (
-        <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+        <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-in fade-in duration-300">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{cleanedNotice}</span>
         </div>
       )}
@@ -354,15 +388,18 @@ export const FirebaseStoragePage = ({ setActivePage }) => {
             <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/60 border border-slate-800">
               <div>
                 <h4 className="text-xs font-bold text-white">تنظيف كاش الإشعارات القديمة</h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">تحرير الذاكرة المحلية للجهاز بدون التأثير على الحسابات</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  حذف جميع الإشعارات المحفوظة محلياً وسحابياً بدون التأثير على حسابات الزبائن
+                </p>
               </div>
               <button
                 type="button"
                 onClick={handleClearLocalCache}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center gap-1.5"
+                disabled={isCleaning}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
-                <Trash2 className="w-3.5 h-3.5 text-amber-400" />
-                <span>تنظيف</span>
+                <Trash2 className={`w-3.5 h-3.5 text-amber-400 ${isCleaning ? 'animate-pulse' : ''}`} />
+                <span>{isCleaning ? 'جارٍ...' : 'تنظيف'}</span>
               </button>
             </div>
 
