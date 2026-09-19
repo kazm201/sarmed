@@ -18,9 +18,11 @@ import {
   ChevronLeft,
   Sparkles,
   Receipt,
-  FileText
+  FileText,
+  FileDown
 } from 'lucide-react';
 import { PrintInvoice } from '../components/common/PrintInvoice';
+import { CustomerDebtPdfModal } from '../components/common/CustomerDebtPdfModal';
 
 export const DashboardPage = ({ setActivePage }) => {
   const { currentUser, isManager, isWorker, settings } = useAuth();
@@ -36,6 +38,7 @@ export const DashboardPage = ({ setActivePage }) => {
   } = useData();
 
   const [selectedTxForReceipt, setSelectedTxForReceipt] = useState(null);
+  const [showPdfModal, setShowPdfModal] = useState(false);
 
   // Recent transactions list (limit to 6)
   const recentTransactions = transactions.slice(0, 8);
@@ -68,6 +71,16 @@ export const DashboardPage = ({ setActivePage }) => {
 
           {/* Quick Action Buttons */}
           <div className="flex flex-wrap items-center gap-2.5">
+            {isManager && (
+              <button
+                onClick={() => setShowPdfModal(true)}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs sm:text-sm shadow-md transition-all active:scale-95"
+              >
+                <FileDown className="w-4 h-4 text-rose-400" />
+                <span>كشف الديون (PDF)</span>
+              </button>
+            )}
+
             <button
               onClick={() => setActivePage('add-debt')}
               className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold text-xs sm:text-sm shadow-lg shadow-rose-950/50 transition-all active:scale-95"
@@ -388,6 +401,14 @@ export const DashboardPage = ({ setActivePage }) => {
           customer={customers.find((c) => c.id === selectedTxForReceipt.customerId) || { name: selectedTxForReceipt.customerName }}
           mode="receipt"
           onClose={() => setSelectedTxForReceipt(null)}
+        />
+      )}
+
+      {/* Customer Debts PDF Modal */}
+      {showPdfModal && (
+        <CustomerDebtPdfModal
+          customers={customers}
+          onClose={() => setShowPdfModal(false)}
         />
       )}
     </div>

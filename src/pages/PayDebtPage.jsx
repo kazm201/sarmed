@@ -52,7 +52,53 @@ export const PayDebtPage = ({ setActivePage }) => {
   };
 
   // Actual amount ×1000
-  const actualAmount = (parseFloat(amount) || 0) * 1000;
+  const actualAmount = Math.round((parseFloat(amount) || 0) * 1000);
+
+  // Support adding Iraqi Dinar fractions (+250, +500, +750)
+  const addFractionDinars = (dinars) => {
+    setAmount((prev) => {
+      const parsed = parseFloat(prev) || 0;
+      const currentDinars = Math.round(parsed * 1000);
+      const newDinars = currentDinars + dinars;
+      return (newDinars / 1000).toString();
+    });
+  };
+
+  // Friendly Iraqi Spoken Description (e.g. 1250 -> ألف وربع, 25500 -> 25 ألف ونص)
+  const getIraqiVerbalDescription = (totalDinars) => {
+    if (!totalDinars || totalDinars <= 0) return '';
+    const thousands = Math.floor(totalDinars / 1000);
+    const remainder = Math.round(totalDinars % 1000);
+
+    let fractionText = '';
+    if (remainder === 250) fractionText = 'وربع';
+    else if (remainder === 500) fractionText = 'ونصف';
+    else if (remainder === 750) fractionText = 'وثلاثة أرباع (إلا ربع)';
+    else if (remainder > 0) fractionText = `و ${remainder.toLocaleString()} دينار`;
+
+    if (thousands === 0) {
+      if (remainder === 250) return 'مئتان وخمسون دينار (ربع ألف)';
+      if (remainder === 500) return 'خمسمائة دينار (نص ألف)';
+      if (remainder === 750) return 'سبعمائة وخمسون دينار (إلا ربع)';
+      return `${remainder} دينار`;
+    }
+
+    if (thousands === 1) {
+      if (remainder === 250) return 'ألف ومئتان وخمسون دينار (ألف وربع)';
+      if (remainder === 500) return 'ألف وخمسمائة دينار (ألف ونص)';
+      if (remainder === 750) return 'ألفان إلا ربع (1,750 د.ع)';
+      return `ألف ${fractionText}`;
+    }
+
+    if (thousands === 2) {
+      if (remainder === 250) return 'ألفان ومئتان وخمسون دينار (ألفين وربع)';
+      if (remainder === 500) return 'ألفان وخمسمائة دينار (ألفين ونص)';
+      if (remainder === 750) return 'ثلاثة آلاف إلا ربع (2,750 د.ع)';
+      return `ألفان ${fractionText}`;
+    }
+
+    return `${thousands.toLocaleString()} ألف ${fractionText}`.trim();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -234,9 +280,15 @@ export const PayDebtPage = ({ setActivePage }) => {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-2">
-              المبلغ الواصل — أدخل العدد (كل 1 = 1,000 {settings.currency}) *
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-slate-300">
+                المبلغ الواصل — أدخل العدد بالآلاف أو استخدم أزرار الكسور *
+              </label>
+              <span className="text-[11px] text-slate-400">
+                1 = ألف | 1.25 = ألف وربع | 25.5 = 25 ألف ونص
+              </span>
+            </div>
+
             <div className="relative">
               <input
                 type="number"
@@ -253,15 +305,44 @@ export const PayDebtPage = ({ setActivePage }) => {
               </span>
             </div>
 
-            {/* Live preview */}
-            {amount && parseFloat(amount) > 0 && (
-              <div className="mt-2 flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-emerald-950/40 border border-emerald-900/40">
-                <span className="text-slate-400">{parseFloat(amount).toLocaleString('ar')} ألف</span>
-                <span className="text-slate-500">×</span>
-                <span className="text-slate-400">1,000</span>
-                <span className="text-slate-500">=</span>
-                <strong className="text-emerald-400 font-black">{actualAmount.toLocaleString()} {settings.currency}</strong>
-                <span className="text-slate-500 text-[10px]">المبلغ الفعلي المحفوظ</span>
+            {/* Iraqi Dinar Fractional Addition Chips (+250, +500, +750) */}
+            <div className="flex flex-wrap items-center gap-2 mt-2.5">
+              <span className="text-[11px] font-bold text-emerald-400">تكملات وكسور الدينار:</span>
+              <button
+                type="button"
+                onClick={() => addFractionDinars(250)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-800 text-emerald-300 border border-emerald-500/40 text-xs font-black transition-all active:scale-95 shadow-sm"
+              >
+                + 250 (ربع)
+              </button>
+              <button
+                type="button"
+                onClick={() => addFractionDinars(500)}
+                className="px-3 py-1.5 rounded-xl bg-teal-950/80 hover:bg-teal-800 text-teal-300 border border-teal-500/40 text-xs font-black transition-all active:scale-95 shadow-sm"
+              >
+                + 500 (نصف)
+              </button>
+              <button
+                type="button"
+                onClick={() => addFractionDinars(750)}
+                className="px-3 py-1.5 rounded-xl bg-cyan-950/80 hover:bg-cyan-800 text-cyan-300 border border-cyan-500/40 text-xs font-black transition-all active:scale-95 shadow-sm"
+              >
+                + 750 (إلا ربع)
+              </button>
+            </div>
+
+            {/* Live calculation and Iraqi Verbal Preview */}
+            {amount && actualAmount > 0 && (
+              <div className="mt-2.5 p-3 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 space-y-1 animate-in fade-in">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-300">المبلغ المسجل للتسديد:</span>
+                  <strong className="text-emerald-400 font-black text-sm">
+                    {actualAmount.toLocaleString()} {settings.currency}
+                  </strong>
+                </div>
+                <div className="text-[11px] text-emerald-300/90 font-bold">
+                  {getIraqiVerbalDescription(actualAmount)}
+                </div>
               </div>
             )}
           </div>

@@ -514,19 +514,93 @@ export const DataProvider = ({ children }) => {
     localStorage.removeItem(LOCAL_NOTIFICATIONS_KEY);
   };
 
-  // ⚠️ Reset ALL data (customers, transactions, notifications)
+  const STATS_RESET_KEY = 'sarmed_stats_reset_timestamp';
+  const [statsResetTimestamp, setStatsResetTimestamp] = useState(() => {
+    try {
+      return parseInt(localStorage.getItem(STATS_RESET_KEY) || '0', 10);
+    } catch {
+      return 0;
+    }
+  });
+
+  // Local calendar date helper (prevents UTC timezone offset issues in Iraq GMT+3)
+  const getLocalDateStr = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const [currentDateStr, setCurrentDateStr] = useState(getLocalDateStr());
+
+  // Automatic 24-hour Daily Statistics Cycle
+  // Runs every 60 seconds to ensure stats reset automatically when a new day arrives
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const today = getLocalDateStr();
+      if (today !== currentDateStr) {
+        setCurrentDateStr(today);
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [currentDateStr]);
+
+  // Safe Statistics Reset & Audit (Only resets stats and repairs calculation errors; NEVER deletes customers)
+  const resetStatisticsOnly = async () => {
+    const now = Date.now();
+    setStatsResetTimestamp(now);
+    try {
+      localStorage.setItem(STATS_RESET_KEY, now.toString());
+    } catch (e) {}
+
+    // Audit and heal customer balances based strictly on approved ledger transactions
+    let correctedCount = 0;
+    const auditedCustomers = customers.map((cust) => {
+      const custTxs = transactions.filter(
+        (t) => t.customerId === cust.id && t.status === 'approved'
+      );
+      const totalDebts = custTxs
+        .filter((t) => t.type === 'debt')
+        .reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
+      const totalPayments = custTxs
+        .filter((t) => t.type === 'payment')
+        .reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
+      const accurateDebt = Math.max(0, totalDebts - totalPayments);
+
+      if (cust.currentDebt !== accurateDebt) {
+        correctedCount++;
+        if (db) {
+          try {
+            void updateDoc(doc(db, 'customers', cust.id), {
+              currentDebt: accurateDebt,
+              updatedAt: new Date().toISOString()
+            }).catch(() => {});
+          } catch (e) {}
+        }
+        return { ...cust, currentDebt: accurateDebt };
+      }
+      return cust;
+    });
+
+    if (correctedCount > 0) {
+      setCustomers(auditedCustomers);
+    }
+
+    notificationService.playChime('success');
+    return { correctedCount, totalAudited: customers.length };
+  };
+
+  // ⚠️ Full Data Wipe (kept for master administrative fallback only)
   const resetAllData = async () => {
-    // Clear local state
     setCustomers([]);
     setTransactions([]);
     setNotifications([]);
-
-    // Clear localStorage
     localStorage.removeItem(LOCAL_CUSTOMERS_KEY);
     localStorage.removeItem(LOCAL_TRANSACTIONS_KEY);
     localStorage.removeItem(LOCAL_NOTIFICATIONS_KEY);
+    localStorage.removeItem(STATS_RESET_KEY);
 
-    // Clear Firestore if available
     if (db) {
       try {
         const { getDocs, writeBatch, collection: col } = await import('../services/firebase');
@@ -549,10 +623,17 @@ export const DataProvider = ({ children }) => {
   const totalCustomers = customers.length;
   const customersWithDebt = customers.filter((c) => (parseFloat(c.currentDebt) || 0) > 0).length;
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayTransactions = transactions.filter(
-    (t) => t.status === 'approved' && t.date === todayStr
-  );
+  // 24-Hour Cycle Transactions: transactions created today in local time, AND after any manual stats reset
+  const todayTransactions = transactions.filter((t) => {
+    if (t.status !== 'approved') return false;
+    const isToday = t.date === currentDateStr || (t.createdAt && t.createdAt.startsWith(currentDateStr));
+    if (!isToday) return false;
+    if (statsResetTimestamp > 0) {
+      const txTime = t.createdAt ? new Date(t.createdAt).getTime() : 0;
+      if (txTime && txTime < statsResetTimestamp) return false;
+    }
+    return true;
+  });
 
   const todayCollections = todayTransactions
     .filter((t) => t.type === 'payment')
@@ -584,6 +665,9 @@ export const DataProvider = ({ children }) => {
         customersWithDebt,
         todayCollections,
         todayDebts,
+        todayTransactionsCount: todayTransactions.length,
+        currentDateStr,
+        statsResetTimestamp,
         pendingApprovals,
         pendingApprovalsCount,
         addCustomer,
@@ -596,6 +680,7 @@ export const DataProvider = ({ children }) => {
         markNotificationRead,
         clearAllNotifications,
         dispatchNotification,
+        resetStatisticsOnly,
         resetAllData
       }}
     >

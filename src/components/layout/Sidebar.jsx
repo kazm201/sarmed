@@ -13,9 +13,10 @@ import {
   ShieldCheck,
   UserCheck,
   LogOut,
-  Smartphone
-  ,BarChart3,
-  History
+  Smartphone,
+  BarChart3,
+  History,
+  Database
 } from 'lucide-react';
 
 export const Sidebar = ({ isOpen, onClose, activePage, setActivePage }) => {
@@ -70,6 +71,12 @@ export const Sidebar = ({ isOpen, onClose, activePage, setActivePage }) => {
       badge: pendingApprovalsCount > 0 ? `${pendingApprovalsCount} جديد` : null,
       badgeColor: 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse',
       roles: ['manager'] // Visible only to manager
+    },
+    {
+      id: 'firebase-storage',
+      label: 'سعة وتخزين Firebase',
+      icon: Database,
+      roles: ['manager']
     },
     {
       id: 'settings',

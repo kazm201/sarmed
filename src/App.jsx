@@ -13,6 +13,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { CustomerManagementPage } from './pages/CustomerManagementPage';
 import { StatisticsPage } from './pages/StatisticsPage';
 import { ActivityPage } from './pages/ActivityPage';
+import { FirebaseStoragePage } from './pages/FirebaseStoragePage';
 import {
   LayoutDashboard,
   PlusCircle,
@@ -46,15 +47,17 @@ const MainLayout = () => {
       case 'pay-debt':
         return <PayDebtPage setActivePage={setActivePage} />;
       case 'customers':
-        return isManager ? <CustomerManagementPage /> : <AddDebtPage setActivePage={setActivePage} />;
+        return isManager ? <CustomersPage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
       case 'statistics':
         return isManager ? <StatisticsPage /> : <AddDebtPage setActivePage={setActivePage} />;
       case 'activities':
         return isManager ? <ActivityPage /> : <AddDebtPage setActivePage={setActivePage} />;
       case 'approvals':
         return isManager ? <ApprovalsPage /> : <AddDebtPage setActivePage={setActivePage} />;
+      case 'firebase-storage':
+        return isManager ? <FirebaseStoragePage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
       case 'settings':
-        return isManager ? <SettingsPage /> : <AddDebtPage setActivePage={setActivePage} />;
+        return isManager ? <SettingsPage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
       default:
         return isManager ? <DashboardPage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
     }

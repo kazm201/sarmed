@@ -19,9 +19,11 @@ import {
   ArrowUpDown,
   MessageCircle,
   Clock,
-  Printer
+  Printer,
+  FileDown
 } from 'lucide-react';
 import { PrintInvoice } from '../components/common/PrintInvoice';
+import { CustomerDebtPdfModal } from '../components/common/CustomerDebtPdfModal';
 
 export const CustomersPage = ({ setActivePage }) => {
   const { isManager, settings } = useAuth();
@@ -39,6 +41,7 @@ export const CustomersPage = ({ setActivePage }) => {
 
   // Modal States
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showPdfModal, setShowPdfModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [statementCustomer, setStatementCustomer] = useState(null);
   const [deletingCustomerId, setDeletingCustomerId] = useState(null);
@@ -145,16 +148,26 @@ export const CustomersPage = ({ setActivePage }) => {
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            setFormData({ name: '', phone: '', address: '', notes: '', initialDebt: 0 });
-            setShowAddModal(true);
-          }}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-950/60 transition-all active:scale-95"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>إضافة زبون جديد</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => setShowPdfModal(true)}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold text-xs sm:text-sm shadow-lg shadow-rose-950/60 transition-all active:scale-95"
+          >
+            <FileDown className="w-4 h-4" />
+            <span>تحميل كشف ديون الزبائن (PDF)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setFormData({ name: '', phone: '', address: '', notes: '', initialDebt: 0 });
+              setShowAddModal(true);
+            }}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-950/60 transition-all active:scale-95"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>إضافة زبون جديد</span>
+          </button>
+        </div>
       </div>
 
       {/* Filters, Search & Sorters Bar */}
@@ -554,6 +567,14 @@ export const CustomersPage = ({ setActivePage }) => {
           customerTransactions={transactions.filter((t) => t.customerId === statementCustomer.id)}
           mode="statement"
           onClose={() => setStatementCustomer(null)}
+        />
+      )}
+
+      {/* Customer Debts PDF Export Modal */}
+      {showPdfModal && (
+        <CustomerDebtPdfModal
+          customers={customers}
+          onClose={() => setShowPdfModal(false)}
         />
       )}
     </div>

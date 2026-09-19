@@ -58,14 +58,62 @@ export const AddDebtPage = ({ setActivePage }) => {
   // Quick Amount Addition chips (in display units — multiplied by 1000 when saved)
   const quickAmounts = [1, 2, 5, 10, 25, 50];
   const keypadKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0'];
+
+  // Add keys via keypad
   const addKey = (key) => setAmount((value) => {
-    // Prevent multiple decimals
     if (key === '.' && value.includes('.')) return value;
     return `${value}${key}`.replace(/^0+(?=\d)/, '');
   });
 
+  // Support adding Iraqi Dinar fractions (+250, +500, +750)
+  const addFractionDinars = (dinars) => {
+    setAmount((prev) => {
+      const parsed = parseFloat(prev) || 0;
+      // If user typed in thousands, convert to dinars, add fraction, then back to thousands
+      const currentDinars = Math.round(parsed * 1000);
+      const newDinars = currentDinars + dinars;
+      return (newDinars / 1000).toString();
+    });
+  };
+
   // Computed actual amount (×1000)
-  const actualAmount = (parseFloat(amount) || 0) * 1000;
+  const actualAmount = Math.round((parseFloat(amount) || 0) * 1000);
+
+  // Friendly Iraqi Spoken Description (e.g. 1250 -> ألف وربع, 25500 -> 25 ألف ونص)
+  const getIraqiVerbalDescription = (totalDinars) => {
+    if (!totalDinars || totalDinars <= 0) return '';
+    const thousands = Math.floor(totalDinars / 1000);
+    const remainder = Math.round(totalDinars % 1000);
+
+    let fractionText = '';
+    if (remainder === 250) fractionText = 'وربع';
+    else if (remainder === 500) fractionText = 'ونصف';
+    else if (remainder === 750) fractionText = 'وثلاثة أرباع (إلا ربع)';
+    else if (remainder > 0) fractionText = `و ${remainder.toLocaleString()} دينار`;
+
+    if (thousands === 0) {
+      if (remainder === 250) return 'مئتان وخمسون دينار (ربع ألف)';
+      if (remainder === 500) return 'خمسمائة دينار (نص ألف)';
+      if (remainder === 750) return 'سبعمائة وخمسون دينار (إلا ربع)';
+      return `${remainder} دينار`;
+    }
+
+    if (thousands === 1) {
+      if (remainder === 250) return 'ألف ومئتان وخمسون دينار (ألف وربع)';
+      if (remainder === 500) return 'ألف وخمسمائة دينار (ألف ونص)';
+      if (remainder === 750) return 'ألفان إلا ربع (1,750 د.ع)';
+      return `ألف ${fractionText}`;
+    }
+
+    if (thousands === 2) {
+      if (remainder === 250) return 'ألفان ومئتان وخمسون دينار (ألفين وربع)';
+      if (remainder === 500) return 'ألفان وخمسمائة دينار (ألفين ونص)';
+      if (remainder === 750) return 'ثلاثة آلاف إلا ربع (2,750 د.ع)';
+      return `ألفان ${fractionText}`;
+    }
+
+    return `${thousands.toLocaleString()} ألف ${fractionText}`.trim();
+  };
 
   // The worker gets a clear confirmation, then a fresh, ready-to-use debt screen.
   useEffect(() => {
@@ -348,7 +396,15 @@ export const AddDebtPage = ({ setActivePage }) => {
           </h3>
 
           <div>
-            <label className="block text-xs font-bold text-slate-300 mb-2">مبلغ الدين — أدخل العدد (كل 1 = 1,000 {settings.currency}) *</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-slate-300">
+                مبلغ الدين — أدخل العدد بالآلاف أو استخدم أزرار الكسور *
+              </label>
+              <span className="text-[11px] text-slate-400">
+                1 = ألف | 1.25 = ألف وربع | 25.5 = 25 ألف ونص
+              </span>
+            </div>
+
             <div className="relative">
               <input
                 type="number"
@@ -365,19 +421,48 @@ export const AddDebtPage = ({ setActivePage }) => {
               </span>
             </div>
 
-            {/* Live calculation preview */}
-            {amount && parseFloat(amount) > 0 && (
-              <div className="mt-2 flex items-center gap-2 text-xs px-3 py-2 rounded-xl bg-emerald-950/40 border border-emerald-900/40">
-                <span className="text-slate-400">{parseFloat(amount).toLocaleString('ar')} ألف</span>
-                <span className="text-slate-500">×</span>
-                <span className="text-slate-400">1,000</span>
-                <span className="text-slate-500">=</span>
-                <strong className="text-emerald-400 font-black">{actualAmount.toLocaleString()} {settings.currency}</strong>
-                <span className="text-slate-500 text-[10px]">المبلغ الفعلي المحفوظ</span>
+            {/* Iraqi Dinar Fractional Addition Chips (+250, +500, +750) */}
+            <div className="flex flex-wrap items-center gap-2 mt-2.5">
+              <span className="text-[11px] font-bold text-emerald-400">تكملات وكسور الدينار:</span>
+              <button
+                type="button"
+                onClick={() => addFractionDinars(250)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-800 text-emerald-300 border border-emerald-500/40 text-xs font-black transition-all active:scale-95 shadow-sm"
+              >
+                + 250 (ربع)
+              </button>
+              <button
+                type="button"
+                onClick={() => addFractionDinars(500)}
+                className="px-3 py-1.5 rounded-xl bg-teal-950/80 hover:bg-teal-800 text-teal-300 border border-teal-500/40 text-xs font-black transition-all active:scale-95 shadow-sm"
+              >
+                + 500 (نصف)
+              </button>
+              <button
+                type="button"
+                onClick={() => addFractionDinars(750)}
+                className="px-3 py-1.5 rounded-xl bg-cyan-950/80 hover:bg-cyan-800 text-cyan-300 border border-cyan-500/40 text-xs font-black transition-all active:scale-95 shadow-sm"
+              >
+                + 750 (إلا ربع)
+              </button>
+            </div>
+
+            {/* Live calculation and Iraqi Verbal Preview */}
+            {amount && actualAmount > 0 && (
+              <div className="mt-2.5 p-3 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/30 space-y-1 animate-in fade-in">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-300">المبلغ الفعلي المحفوظ:</span>
+                  <strong className="text-emerald-400 font-black text-sm">
+                    {actualAmount.toLocaleString()} {settings.currency}
+                  </strong>
+                </div>
+                <div className="text-[11px] text-emerald-300/90 font-bold">
+                  {getIraqiVerbalDescription(actualAmount)}
+                </div>
               </div>
             )}
 
-            {/* Quick Amount Chips */}
+            {/* Quick Amount Chips (Thousands) */}
             <div className="flex flex-wrap gap-2 mt-2.5">
               {quickAmounts.map((q) => (
                 <button
@@ -390,12 +475,63 @@ export const AddDebtPage = ({ setActivePage }) => {
                 </button>
               ))}
             </div>
+
+            {/* Keypad with integrated 250, 500, 750 buttons */}
             <div className="mt-4 max-w-sm" aria-label="لوحة أرقام مبلغ الدين">
-              <p className="text-[11px] text-slate-400 mb-2">لوحة أرقام سريعة للمس: اختر المبلغ أو اكتبه مباشرة.</p>
+              <p className="text-[11px] text-slate-400 mb-2">لوحة أرقام سريعة للمس:</p>
               <div className="grid grid-cols-3 gap-2">
-                {keypadKeys.map((key) => <button key={key} type="button" onClick={() => addKey(key)} className="py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-700 text-slate-100 text-sm font-black transition-colors">{key}</button>)}
-                <button type="button" onClick={() => setAmount((value) => value.slice(0, -1))} className="py-2.5 rounded-xl bg-amber-500/15 text-amber-300 text-xs font-bold">مسح</button>
-                <button type="button" onClick={() => setAmount('')} className="py-2.5 rounded-xl bg-rose-500/15 text-rose-300 text-xs font-bold">إلغاء</button>
+                {keypadKeys.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => addKey(key)}
+                    className="py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-700 text-slate-100 text-sm font-black transition-colors"
+                  >
+                    {key}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setAmount((value) => value.slice(0, -1))}
+                  className="py-2.5 rounded-xl bg-amber-500/15 text-amber-300 text-xs font-bold"
+                >
+                  مسح
+                </button>
+              </div>
+
+              {/* Keypad fractions row */}
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => addFractionDinars(250)}
+                  className="py-2 rounded-xl bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-300 text-xs font-bold border border-emerald-500/30"
+                >
+                  +250 (ربع)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addFractionDinars(500)}
+                  className="py-2 rounded-xl bg-teal-900/40 hover:bg-teal-800/60 text-teal-300 text-xs font-bold border border-teal-500/30"
+                >
+                  +500 (نص)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addFractionDinars(750)}
+                  className="py-2 rounded-xl bg-cyan-900/40 hover:bg-cyan-800/60 text-cyan-300 text-xs font-bold border border-cyan-500/30"
+                >
+                  +750 (إلا ربع)
+                </button>
+              </div>
+
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => setAmount('')}
+                  className="w-full py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-xs font-bold"
+                >
+                  إلغاء المبلغ
+                </button>
               </div>
             </div>
           </div>

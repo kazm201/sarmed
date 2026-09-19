@@ -20,9 +20,10 @@ import {
 } from 'lucide-react';
 import { getActiveFirebaseConfig, saveFirebaseConfig } from '../services/firebase';
 
-export const SettingsPage = () => {
+export const SettingsPage = ({ setActivePage }) => {
   const { settings, updateSettings, currentUser } = useAuth();
-  const { customers, transactions, notifications, resetAllData } = useData();
+  const { customers, transactions, notifications, resetStatisticsOnly, resetAllData } = useData();
+  const [auditResult, setAuditResult] = useState(null);
 
   // Manager Credentials Form
   const [managerName, setManagerName] = useState(settings.managerName || 'سرمد مؤيد');
@@ -143,12 +144,13 @@ export const SettingsPage = () => {
     }
   };
 
-  // Handle full data reset
+  // Handle Safe Statistics Reset & Balances Audit
   const handleConfirmedReset = async () => {
     if (resetConfirmText !== 'تصفير') return;
     setIsResetting(true);
     try {
-      await resetAllData();
+      const res = await resetStatisticsOnly();
+      setAuditResult(res);
       setResetDone(true);
     } catch (e) {
       console.warn('Reset error:', e);
@@ -451,36 +453,41 @@ export const SettingsPage = () => {
           </div>
         </div>
       </div>
-      {/* Section 5: Danger Zone — Reset All Data */}
-      <div className="glass-panel rounded-3xl p-6 border-2 border-rose-900/60 space-y-4 bg-gradient-to-br from-rose-950/20 to-slate-900">
-        <h3 className="text-sm font-bold text-rose-400 flex items-center gap-2 pb-3 border-b border-rose-900/40">
-          <AlertCircle className="w-4 h-4" />
-          <span>5. منطقة الخطر — تصفير جميع البيانات</span>
+      {/* Section 5: Safe Statistics Reset & Audit (No customer deletion) */}
+      <div className="glass-panel rounded-3xl p-6 border-2 border-amber-800/60 space-y-4 bg-gradient-to-br from-amber-950/20 to-slate-900">
+        <h3 className="text-sm font-bold text-amber-400 flex items-center gap-2 pb-3 border-b border-amber-900/40">
+          <RefreshCw className="w-4 h-4" />
+          <span>5. تصفير وإعادة ضبط الإحصائيات فقط (إصلاح وتدقيق الأخطاء)</span>
         </h3>
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <p className="text-xs text-slate-300 font-semibold">
-              حذف كامل لجميع الزبائن والحركات المالية والإشعارات
+            <p className="text-xs text-slate-200 font-semibold">
+              إعادة ترسيت إحصائيات اليوم وتدقيق الحسابات تلقائياً عند حدوث أي خطأ
             </p>
-            <p className="text-[11px] text-slate-500 mt-1">
-              سيتم مسح {customers.length} زبون و {transactions.length} حركة مالية. لا يمكن التراجع عن هذا الإجراء.
+            <p className="text-[11px] text-slate-400 mt-1">
+              هذا الإجراء آمن تماماً: يقوم بتصفير مؤشرات اليوم وتصحيح أي تفاوت حسابي <strong className="text-emerald-400">دون حذف أي زبون أو حركة مالية</strong>.
             </p>
+            {auditResult && (
+              <p className="text-[11px] text-emerald-300 font-bold mt-1.5">
+                تم تدقيق {auditResult.totalAudited} زبون بنجاح (تم تصحيح {auditResult.correctedCount} حسابات).
+              </p>
+            )}
           </div>
 
           {resetDone ? (
             <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
               <CheckCircle2 className="w-4 h-4" />
-              <span>تم التصفير بنجاح!</span>
+              <span>تم تصفير وتدقيق الإحصاءات بنجاح!</span>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => setShowResetModal(true)}
-              className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/50 font-black text-xs transition-all active:scale-95 shadow-lg"
+              className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/50 font-black text-xs transition-all active:scale-95 shadow-lg"
             >
               <RefreshCw className="w-4 h-4" />
-              <span>تصفير جميع الإحصاءات والبيانات</span>
+              <span>تصفير وإعادة ضبط الإحصائيات فقط</span>
             </button>
           )}
         </div>
@@ -489,28 +496,29 @@ export const SettingsPage = () => {
       {/* Reset Confirmation Modal */}
       {showResetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border-2 border-rose-700/60 p-6 shadow-2xl space-y-4">
+          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border-2 border-amber-600/60 p-6 shadow-2xl space-y-4">
             <div className="flex flex-col items-center text-center gap-3">
-              <div className="w-14 h-14 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center">
-                <AlertCircle className="w-7 h-7" />
+              <div className="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                <RefreshCw className="w-7 h-7" />
               </div>
-              <h3 className="text-base font-black text-white">تحذير! إجراء لا يمكن التراجع عنه</h3>
-              <p className="text-xs text-slate-400">
-                سيتم حذف <strong className="text-rose-300">{customers.length} زبون</strong> و{' '}
-                <strong className="text-rose-300">{transactions.length} حركة مالية</strong> نهائياً من النظام.
+              <h3 className="text-base font-black text-white">تأكيد تصفير الإحصائيات فقط</h3>
+              <p className="text-xs text-slate-300">
+                سيتم إعادة ضبط إحصائيات اليوم وتدقيق حسابات <strong className="text-emerald-400">{customers.length} زبون</strong> من الحركات المعتمدة.
+                <br />
+                <span className="text-emerald-300 font-bold mt-1 block">✓ لن يتم حذف أي زبائن أو سجلات ديون نهائياً.</span>
               </p>
             </div>
 
             <div className="space-y-2">
               <label className="block text-xs font-bold text-slate-300">
-                اكتب كلمة <span className="text-rose-400 font-black">تصفير</span> للتأكيد:
+                اكتب كلمة <span className="text-amber-400 font-black">تصفير</span> للتأكيد:
               </label>
               <input
                 type="text"
                 value={resetConfirmText}
                 onChange={(e) => setResetConfirmText(e.target.value)}
                 placeholder="اكتب: تصفير"
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm font-bold text-center focus:outline-none focus:border-rose-500"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm font-bold text-center focus:outline-none focus:border-amber-500"
               />
             </div>
 
@@ -526,9 +534,9 @@ export const SettingsPage = () => {
                 type="button"
                 disabled={resetConfirmText !== 'تصفير' || isResetting}
                 onClick={handleConfirmedReset}
-                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-black transition-all active:scale-95"
+                className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-black text-xs transition-all active:scale-95"
               >
-                {isResetting ? 'جاري التصفير...' : 'تأكيد التصفير النهائي'}
+                {isResetting ? 'جاري الضبط...' : 'تأكيد التصفير'}
               </button>
             </div>
           </div>
