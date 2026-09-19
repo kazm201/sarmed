@@ -273,11 +273,11 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
           {/* Quick Device Sync / Transfer Button */}
           <button
             onClick={() => setShowDeviceSyncModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all active:scale-95 shadow-sm"
-            title="مزامنة ونقل سريع بين الأجهزة بكود أو QR"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all active:scale-95 shadow-sm"
+            title="مزامنة ونقل سريع بين الأجهزة برابط واتساب أو كود أو QR"
           >
-            <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
-            <span className="hidden sm:inline">مزامنة الأجهزة</span>
+            <ArrowRightLeft className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-[11px]">مزامنة الأجهزة 📲</span>
           </button>
 
           {/* Logout Action */}

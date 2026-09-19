@@ -37,7 +37,7 @@ const loadInitialScopedData = (key, legacyKey) => {
 };
 
 export const DataProvider = ({ children }) => {
-  const { currentUser, isManager, settings, storeId: authStoreId, updateSettings } = useAuth();
+  const { currentUser, isManager, settings, storeId: authStoreId, updateSettings, setStoreId } = useAuth();
   const activeStoreId = authStoreId || currentUser?.storeId || getSavedStoreId() || DEFAULT_STORE_ID;
 
   const [customers, setCustomers] = useState(() =>
@@ -826,6 +826,11 @@ export const DataProvider = ({ children }) => {
       throw new Error('صيغة البيانات غير صحيحة');
     }
 
+    const targetStoreId = (incomingData.storeId || activeStoreId || DEFAULT_STORE_ID).trim();
+    if (incomingData.storeId && setStoreId) {
+      setStoreId(targetStoreId);
+    }
+
     const incomingCustomers = Array.isArray(incomingData.customers) ? incomingData.customers : [];
     const incomingTransactions = Array.isArray(incomingData.transactions) ? incomingData.transactions : [];
 
@@ -834,7 +839,10 @@ export const DataProvider = ({ children }) => {
       const map = new Map(prev.map((c) => [c.id, c]));
       incomingCustomers.forEach((c) => map.set(c.id, c));
       const merged = Array.from(map.values());
-      localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(merged));
+      localStorage.setItem(getCustomersKey(targetStoreId), JSON.stringify(merged));
+      if (targetStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_customers_db', JSON.stringify(merged));
+      }
       return merged;
     });
 
@@ -843,12 +851,25 @@ export const DataProvider = ({ children }) => {
       const map = new Map(prev.map((t) => [t.id, t]));
       incomingTransactions.forEach((t) => map.set(t.id, t));
       const merged = Array.from(map.values());
-      localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(merged));
+      localStorage.setItem(getTransactionsKey(targetStoreId), JSON.stringify(merged));
+      if (targetStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_transactions_db', JSON.stringify(merged));
+      }
       return merged;
     });
 
     if (incomingData.settings) {
       updateSettings(incomingData.settings);
+    }
+
+    // Auto-login session if provided and not currently logged in
+    if (!currentUser && incomingData.currentUser) {
+      try {
+        localStorage.setItem('sarmed_user_session', JSON.stringify(incomingData.currentUser));
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } catch (e) {}
     }
 
     notificationService.playChime('success');
@@ -869,9 +890,55 @@ export const DataProvider = ({ children }) => {
       storeName: settings.storeName,
       customers,
       transactions,
-      settings
+      settings,
+      currentUser: currentUser || {
+        role: 'manager',
+        name: settings.managerName || 'صاحب المحل',
+        username: settings.managerUsername || '1111',
+        storeId: activeStoreId,
+        loginTime: new Date().toISOString()
+      }
     };
   };
+
+  // Handle Magic Sync link from URL (e.g. #sync=BASE64 or #import=BASE64)
+  useEffect(() => {
+    const handleUrlHashSync = async () => {
+      try {
+        const hash = window.location.hash || '';
+        if (hash.startsWith('#sync=') || hash.startsWith('#import=')) {
+          const encoded = hash.replace(/^#(sync|import)=/, '').trim();
+          if (!encoded) return;
+
+          let rawJson = '';
+          try {
+            rawJson = decodeURIComponent(escape(atob(encoded)));
+          } catch {
+            try {
+              rawJson = atob(encoded);
+            } catch {
+              rawJson = decodeURIComponent(encoded);
+            }
+          }
+
+          const parsed = JSON.parse(rawJson);
+          if (parsed && (parsed.customers || parsed.storeId)) {
+            // Clean URL hash smoothly
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+
+            const res = await importStoreData(parsed);
+            alert(`🎉 تم بنجاح نقل ومزامنة بيانات المتجر إلى هذا الجهاز!\n\nتم استيراد ${res.customersCount} زبون و ${res.transactionsCount} حركة مالية بنجاح.`);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to parse URL hash sync data:', err);
+      }
+    };
+
+    handleUrlHashSync();
+    window.addEventListener('hashchange', handleUrlHashSync);
+    return () => window.removeEventListener('hashchange', handleUrlHashSync);
+  }, []);
 
   // Computed Financial Metrics & Stats
   const totalDebt = customers.reduce((acc, c) => acc + (parseFloat(c.currentDebt) || 0), 0);

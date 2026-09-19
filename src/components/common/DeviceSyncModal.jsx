@@ -17,7 +17,7 @@ import {
   Sparkles
 } from 'lucide-react';
 
-export const DeviceSyncModal = ({ isOpen, onClose }) => {
+export const DeviceSyncModal = ({ isOpen, onClose, initialTab = 'send' }) => {
   const { storeId } = useAuth();
   const {
     customers,
@@ -29,8 +29,9 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
     isSyncing
   } = useData();
 
-  const [activeTab, setActiveTab] = useState('send'); // 'send' | 'receive'
+  const [activeTab, setActiveTab] = useState(initialTab || 'send'); // 'send' | 'receive'
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [importCode, setImportCode] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -38,11 +39,25 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   // Generate payload
-  const exportData = exportStoreData();
-  const encodedPayload = btoa(unescape(encodeURIComponent(JSON.stringify(exportData))));
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
-    window.location.origin + window.location.pathname + '#sync=' + encodedPayload.substring(0, 1800)
-  )}`;
+  const exportData = exportStoreData ? exportStoreData() : { storeId, customers, transactions };
+  let encodedPayload = '';
+  try {
+    encodedPayload = btoa(unescape(encodeURIComponent(JSON.stringify(exportData))));
+  } catch (e) {
+    try {
+      encodedPayload = btoa(JSON.stringify(exportData));
+    } catch {}
+  }
+
+  const fullSyncUrl = `${window.location.origin}${window.location.pathname}#sync=${encodedPayload}`;
+  
+  // Only use QR if URL length is reasonable for QR generator
+  const isQrSafe = fullSyncUrl.length < 1900;
+  const qrUrl = isQrSafe
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(fullSyncUrl)}`
+    : `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
+        window.location.origin + window.location.pathname + '#sync=' + encodedPayload.substring(0, 1500)
+      )}`;
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(encodedPayload);
@@ -50,15 +65,40 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
     setTimeout(() => setCopied(false), 3000);
   };
 
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(fullSyncUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 3000);
+  };
+
   const handleWhatsAppShare = () => {
-    const text = `كود مزامنة حساب السوبرماركت (المعرف: ${storeId}):\n\n${encodedPayload}`;
+    const text = `رابط مزامنة ونقل بيانات السوبرماركت (المعرف: ${storeId}):\nاضغط على هذا الرابط من هاتفك الآخر لتفتح لك كل الديون والزبائن مباشرة وبنقرة واحدة:\n\n${fullSyncUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
+  const handlePasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        setImportCode(text);
+      }
+    } catch (e) {
+      // Clipboard permissions not granted
+    }
+  };
+
   const handleApplyImport = async () => {
-    if (!importCode.trim()) {
-      setImportResult({ success: false, message: 'يرجى لصق كود المزامنة المستلم من الجهاز الأول' });
+    let rawInput = importCode.trim();
+    if (!rawInput) {
+      setImportResult({ success: false, message: 'يرجى لصق كود أو رابط المزامنة المستلم من الجهاز الأول' });
       return;
+    }
+
+    // Auto-extract payload if full URL was pasted
+    if (rawInput.includes('#sync=')) {
+      rawInput = rawInput.split('#sync=')[1];
+    } else if (rawInput.includes('#import=')) {
+      rawInput = rawInput.split('#import=')[1];
     }
 
     setIsProcessing(true);
@@ -67,9 +107,13 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
     try {
       let rawJson = '';
       try {
-        rawJson = decodeURIComponent(escape(atob(importCode.trim())));
+        rawJson = decodeURIComponent(escape(atob(rawInput)));
       } catch {
-        rawJson = importCode.trim();
+        try {
+          rawJson = atob(rawInput);
+        } catch {
+          rawJson = decodeURIComponent(rawInput);
+        }
       }
 
       const parsed = JSON.parse(rawJson);
@@ -81,11 +125,11 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
       });
       setTimeout(() => {
         onClose();
-      }, 3000);
+      }, 2000);
     } catch (err) {
       setImportResult({
         success: false,
-        message: 'كود المزامنة غير صالح أو تالف. يرجى إعادة نسخه بالكامل من الجهاز الأول.'
+        message: 'كود أو رابط المزامنة غير صالح. يرجى التأكد من نسخه بالكامل من الجهاز الأول.'
       });
     } finally {
       setIsProcessing(false);
@@ -159,26 +203,60 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
               </div>
             </div>
 
+            {/* Main Action: Send via WhatsApp */}
+            <div className="p-4 rounded-2xl bg-gradient-to-tr from-emerald-950/80 to-slate-900 border border-emerald-500/40 space-y-3">
+              <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold">
+                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>أسرع طريقة لنقل البيانات إلى هاتفك الآخر:</span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                اضغط على الزر الأخضر لإرسال الرابط إلى هاتفك الآخر عبر <strong>واتساب</strong>. وبمجرد فتح الرابط من هناك، ستظهر كل البيانات فوراً وبدون أي كتابة!
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <button
+                  onClick={handleWhatsAppShare}
+                  className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40 transition-all active:scale-95"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>إرسال الرابط عبر واتساب</span>
+                </button>
+
+                <button
+                  onClick={handleCopyLink}
+                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+                >
+                  {copiedLink ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedLink ? 'تم نسخ الرابط!' : 'نسخ رابط المزامنة'}</span>
+                </button>
+              </div>
+            </div>
+
             {/* QR Code display */}
             <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
               <div className="p-2 rounded-xl bg-white shadow-md">
                 <img
                   src={qrUrl}
                   alt="QR Code للمزامنة"
-                  className="w-40 h-40 object-contain rounded"
+                  className="w-36 h-36 object-contain rounded"
                   loading="lazy"
                 />
               </div>
               <p className="text-[11px] text-slate-400 text-center">
-                امسح الرمز بكاميرا الهاتف الآخر لنقل كافة الزبائن والديون بلحظة واحدة
+                أو امسح الرمز بكاميرا الهاتف الآخر لنقل البيانات مباشرة
               </p>
             </div>
 
             {/* Fast Transfer Code */}
             <div className="space-y-1.5">
               <label className="block text-xs font-bold text-slate-300 flex items-center justify-between">
-                <span>أو انسخ كود النقل المباشر:</span>
-                <span className="text-[10px] text-slate-400">مشفّر وآمن</span>
+                <span>أو كود النقل المباشر:</span>
+                <button
+                  onClick={handleCopyCode}
+                  className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{copied ? 'تم النسخ!' : 'نسخ الكود'}</span>
+                </button>
               </label>
               <div className="relative">
                 <textarea
@@ -188,24 +266,6 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
                   className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-400 select-all resize-none"
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                onClick={handleCopyCode}
-                className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-              >
-                {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                <span>{copied ? 'تم نسخ الكود!' : 'نسخ كود النقل'}</span>
-              </button>
-
-              <button
-                onClick={handleWhatsAppShare}
-                className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
-              >
-                <Send className="w-4 h-4" />
-                <span>إرسال عبر واتساب</span>
-              </button>
             </div>
           </div>
         )}
@@ -221,13 +281,23 @@ export const DeviceSyncModal = ({ isOpen, onClose }) => {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-300">
-                كود المزامنة المستلم:
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-300">
+                  كود أو رابط المزامنة المستلم:
+                </label>
+                <button
+                  type="button"
+                  onClick={handlePasteFromClipboard}
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 bg-emerald-950/60 px-2 py-1 rounded-lg border border-emerald-800/60"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>لصق من الحافظة</span>
+                </button>
+              </div>
               <textarea
                 value={importCode}
                 onChange={(e) => setImportCode(e.target.value)}
-                placeholder="الصق الكود هنا..."
+                placeholder="الصق كود النقل أو الرابط هنا..."
                 rows={4}
                 className="w-full p-3 rounded-2xl bg-slate-950 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:border-emerald-400"
               />

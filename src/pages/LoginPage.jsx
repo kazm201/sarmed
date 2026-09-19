@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth, getSavedStoreId } from '../context/AuthContext';
-import { Store, User, Lock, ArrowRight, AlertCircle, ShieldCheck, KeyRound, Sparkles } from 'lucide-react';
+import { Store, User, Lock, ArrowRight, AlertCircle, ShieldCheck, KeyRound, Sparkles, Smartphone, ArrowRightLeft } from 'lucide-react';
+import { DeviceSyncModal } from '../components/common/DeviceSyncModal';
 
 export const LoginPage = () => {
   const { login, settings, storeId: activeStoreId } = useAuth();
@@ -9,6 +10,7 @@ export const LoginPage = () => {
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -128,10 +130,36 @@ export const LoginPage = () => {
           </button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
+        {/* Instant Sync / Import from another device */}
+        <div className="mt-5 p-3.5 rounded-2xl bg-slate-900/90 border border-emerald-500/30 text-center space-y-2">
+          <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-300">
+            <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
+            <span>هل تفتح الموقع على جهاز جديد؟</span>
+          </div>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            يمكنك استيراد كافة بياناتك والزبائن المسجلين على هاتفك الأول بنقرة واحدة عبر الرابط أو كود النقل:
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowSyncModal(true)}
+            className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+          >
+            <Smartphone className="w-4 h-4 text-emerald-400" />
+            <span>استيراد ونقل البيانات من هاتفي القديم</span>
+          </button>
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-slate-800 text-center text-[11px] text-slate-400 flex items-center justify-center gap-1.5">
           <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>نظام مشفر ومحمي — جميع السجلات محفوظة تلقائياً تحت معرف حسابك.</span>
         </div>
+
+        {/* Device Sync Modal on Login */}
+        <DeviceSyncModal
+          isOpen={showSyncModal}
+          onClose={() => setShowSyncModal(false)}
+          initialTab="receive"
+        />
       </div>
     </div>
   );
