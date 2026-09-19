@@ -45,6 +45,12 @@ export const Sidebar = ({ isOpen, onClose, activePage, setActivePage }) => {
       highlight: true
     },
     {
+      id: 'worker-ledger',
+      label: 'سجل ديون الزبائن',
+      icon: Users,
+      roles: ['worker']
+    },
+    {
       id: 'customers',
       label: 'إدارة وإضافة الزبائن',
       icon: Users,

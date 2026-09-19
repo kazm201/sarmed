@@ -14,6 +14,7 @@ import { CustomerManagementPage } from './pages/CustomerManagementPage';
 import { StatisticsPage } from './pages/StatisticsPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { FirebaseStoragePage } from './pages/FirebaseStoragePage';
+import { WorkerDebtLedgerPage } from './pages/WorkerDebtLedgerPage';
 import {
   LayoutDashboard,
   PlusCircle,
@@ -29,7 +30,7 @@ const MainLayout = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   useEffect(() => {
-    if (isWorker && !['add-debt', 'pay-debt'].includes(activePage)) setActivePage('add-debt');
+    if (isWorker && !['add-debt', 'pay-debt', 'worker-ledger'].includes(activePage)) setActivePage('add-debt');
   }, [isWorker, activePage]);
 
   // If not logged in, show Login Screen
@@ -58,6 +59,8 @@ const MainLayout = () => {
         return isManager ? <FirebaseStoragePage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
       case 'settings':
         return isManager ? <SettingsPage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
+      case 'worker-ledger':
+        return <WorkerDebtLedgerPage setActivePage={setActivePage} />;
       default:
         return isManager ? <DashboardPage setActivePage={setActivePage} /> : <AddDebtPage setActivePage={setActivePage} />;
     }
@@ -123,6 +126,18 @@ const MainLayout = () => {
           </div>
           <span>تسديد</span>
         </button>
+
+        {isWorker && (
+          <button
+            onClick={() => setActivePage('worker-ledger')}
+            className={`flex flex-col items-center gap-1 text-[10px] font-bold p-1 transition-all ${
+              activePage === 'worker-ledger' ? 'text-teal-400' : 'text-slate-400'
+            }`}
+          >
+            <Users className="w-5 h-5" />
+            <span>الزبائن</span>
+          </button>
+        )}
 
         {isManager && <button
           onClick={() => setActivePage('customers')}
