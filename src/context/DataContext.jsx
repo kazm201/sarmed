@@ -57,9 +57,12 @@ export const DataProvider = ({ children }) => {
   const [cloudStatus, setCloudStatus] = useState('connecting'); // 'connecting' | 'connected' | 'needs_activation' | 'error' | 'offline'
   const [cloudError, setCloudError] = useState(null);
   const [lastCloudSyncTime, setLastCloudSyncTime] = useState(null);
+  // True while we are waiting for the first Firebase snapshot on this device
+  const [isLoadingCloudData, setIsLoadingCloudData] = useState(true);
 
   // Reload local state whenever activeStoreId changes
   useEffect(() => {
+    setIsLoadingCloudData(true); // Reset loading on store switch
     setCustomers(loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db'));
     setTransactions(loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db'));
     setNotifications(loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db'));
@@ -121,12 +124,26 @@ export const DataProvider = ({ children }) => {
   useEffect(() => {
     if (!db || !activeStoreId) {
       setCloudStatus('offline');
+      setIsLoadingCloudData(false);
       return;
     }
 
     let unsubCustomers = () => {};
     let unsubTransactions = () => {};
     let unsubNotifications = () => {};
+    let customersLoaded = false;
+    let transactionsLoaded = false;
+
+    const checkAllLoaded = () => {
+      if (customersLoaded && transactionsLoaded) {
+        setIsLoadingCloudData(false);
+      }
+    };
+
+    // Safety timeout: if Firebase doesn't respond in 8s, stop loading
+    const safetyTimer = setTimeout(() => {
+      setIsLoadingCloudData(false);
+    }, 8000);
 
     try {
       setIsSyncing(true);
@@ -142,40 +159,45 @@ export const DataProvider = ({ children }) => {
           setIsSyncing(false);
 
           if (!snapshot.empty) {
-            const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-            list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+            // ✅ Cloud has data — use it directly on this device
+            const cloudList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+            cloudList.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
 
-            // Push any local customers missing in cloud
+            // Also push any local-only customers that are missing in cloud
             try {
               const localSaved = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
-              const missingOnRemote = localSaved.filter((lc) => !list.some((rc) => rc.id === lc.id));
+              const missingOnRemote = localSaved.filter((lc) => !cloudList.some((rc) => rc.id === lc.id));
               if (missingOnRemote.length > 0) {
-                console.log(`🔄 رفع زبائن محليين إلى السحابة للمتجر [${activeStoreId}]:`, missingOnRemote.length);
                 missingOnRemote.forEach((c) => {
                   void setDoc(doc(db, 'stores', activeStoreId, 'customers', c.id), c).catch(() => {});
-                  void setDoc(doc(db, 'customers', c.id), c).catch(() => {});
                 });
               }
             } catch (e) {}
 
-            setCustomers(list);
+            // ✅ Set state from cloud data
+            setCustomers(cloudList);
+            localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(cloudList));
           } else {
-            // Cloud is empty for this store ID -> Push all local data to cloud
+            // Cloud is empty for this store ID -> Push local data to cloud if any
             try {
               const localSaved = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
               if (localSaved.length > 0) {
-                console.log(`🔄 رفع جميع زبائن المتجر [${activeStoreId}] إلى السحابة:`, localSaved.length);
                 localSaved.forEach((c) => {
                   void setDoc(doc(db, 'stores', activeStoreId, 'customers', c.id), c).catch(() => {});
-                  void setDoc(doc(db, 'customers', c.id), c).catch(() => {});
                 });
               }
             } catch (e) {}
           }
+
+          customersLoaded = true;
+          checkAllLoaded();
         },
         (error) => {
           console.warn('Firestore customers listener error:', error.code, error.message);
           setIsSyncing(false);
+          customersLoaded = true;
+          checkAllLoaded();
+
           if (
             error.code === 'permission-denied' ||
             error.message?.includes('PERMISSION_DENIED') ||
@@ -197,36 +219,41 @@ export const DataProvider = ({ children }) => {
         storeTransCollection,
         (snapshot) => {
           if (!snapshot.empty) {
-            const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-            list.sort((a, b) => new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0));
+            const cloudList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+            cloudList.sort((a, b) => new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0));
 
-            // Sync any local transactions not yet in cloud
+            // Push any local-only transactions not in cloud
             try {
               const localSaved = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
-              const missingOnRemote = localSaved.filter((lt) => !list.some((rt) => rt.id === lt.id));
+              const missingOnRemote = localSaved.filter((lt) => !cloudList.some((rt) => rt.id === lt.id));
               if (missingOnRemote.length > 0) {
                 missingOnRemote.forEach((t) => {
                   void setDoc(doc(db, 'stores', activeStoreId, 'transactions', t.id), t).catch(() => {});
-                  void setDoc(doc(db, 'transactions', t.id), t).catch(() => {});
                 });
               }
             } catch (e) {}
 
-            setTransactions(list);
+            // ✅ Set state from cloud data
+            setTransactions(cloudList);
+            localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(cloudList));
           } else {
             try {
               const localSaved = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
               if (localSaved.length > 0) {
                 localSaved.forEach((t) => {
                   void setDoc(doc(db, 'stores', activeStoreId, 'transactions', t.id), t).catch(() => {});
-                  void setDoc(doc(db, 'transactions', t.id), t).catch(() => {});
                 });
               }
             } catch (e) {}
           }
+
+          transactionsLoaded = true;
+          checkAllLoaded();
         },
         (error) => {
           console.warn('Firestore transactions listener notice:', error.message);
+          transactionsLoaded = true;
+          checkAllLoaded();
         }
       );
 
@@ -236,7 +263,7 @@ export const DataProvider = ({ children }) => {
         storeNotifCollection,
         (snapshot) => {
           if (!snapshot.empty) {
-            const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+            const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
             list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
             setNotifications(list);
           }
@@ -246,9 +273,11 @@ export const DataProvider = ({ children }) => {
     } catch (err) {
       console.warn('Firebase snapshot listener initialization notice:', err);
       setIsSyncing(false);
+      setIsLoadingCloudData(false);
     }
 
     return () => {
+      clearTimeout(safetyTimer);
       unsubCustomers();
       unsubTransactions();
       unsubNotifications();
@@ -718,14 +747,12 @@ export const DataProvider = ({ children }) => {
       // 2. Sync Customers
       for (const cust of customers) {
         await setDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), cust, { merge: true });
-        await setDoc(doc(db, 'customers', cust.id), cust, { merge: true });
         count++;
       }
 
       // 3. Sync Transactions
       for (const tx of transactions) {
         await setDoc(doc(db, 'stores', activeStoreId, 'transactions', tx.id), tx, { merge: true });
-        await setDoc(doc(db, 'transactions', tx.id), tx, { merge: true });
         count++;
       }
 
@@ -755,6 +782,41 @@ export const DataProvider = ({ children }) => {
       throw err;
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  // Force pull all data fresh from Firebase (for manual refresh on new device)
+  const forceRefreshFromCloud = async () => {
+    if (!db || !activeStoreId) return;
+    setIsSyncing(true);
+    setIsLoadingCloudData(true);
+    try {
+      const { getDocs: getDocsOnce, collection: col } = await import('../services/firebase');
+
+      const custSnap = await getDocs(collection(db, 'stores', activeStoreId, 'customers'));
+      if (!custSnap.empty) {
+        const list = custSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+        setCustomers(list);
+        localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(list));
+      }
+
+      const txSnap = await getDocs(collection(db, 'stores', activeStoreId, 'transactions'));
+      if (!txSnap.empty) {
+        const list = txSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        setTransactions(list);
+        localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(list));
+      }
+
+      setCloudStatus('connected');
+      setLastCloudSyncTime(new Date().toLocaleTimeString('ar-IQ'));
+      notificationService.playChime('success');
+    } catch (err) {
+      console.warn('Force refresh error:', err);
+    } finally {
+      setIsSyncing(false);
+      setIsLoadingCloudData(false);
     }
   };
 
@@ -856,8 +918,10 @@ export const DataProvider = ({ children }) => {
         cloudStatus,
         cloudError,
         lastCloudSyncTime,
+        isLoadingCloudData,
         isCloudConnected: cloudStatus === 'connected',
         syncAllDataToCloud,
+        forceRefreshFromCloud,
         importStoreData,
         exportStoreData,
         totalDebt,

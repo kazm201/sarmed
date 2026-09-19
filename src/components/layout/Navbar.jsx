@@ -37,6 +37,8 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
     isOnline,
     cloudStatus,
     syncAllDataToCloud,
+    forceRefreshFromCloud,
+    isLoadingCloudData,
     pendingApprovalsCount
   } = useData();
 
@@ -118,19 +120,19 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
                     </>
                   )}
                 </span>
-                {isSyncing ? (
+                {isSyncing || isLoadingCloudData ? (
                   <span className="flex items-center gap-1 text-teal-400">
                     <RefreshCw className="w-3 h-3 animate-spin" />
-                    مزامنة...
+                    {isLoadingCloudData ? 'جاري التحميل...' : 'مزامنة...'}
                   </span>
                 ) : (
                   <button
-                    onClick={() => syncAllDataToCloud().catch(() => {})}
-                    className="p-1 rounded bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 hover:text-emerald-400 transition-all text-[11px] flex items-center gap-1"
-                    title="مزامنة فورية مع السحابة وجميع الأجهزة"
+                    onClick={() => forceRefreshFromCloud ? forceRefreshFromCloud().catch(() => {}) : syncAllDataToCloud().catch(() => {})}
+                    className="p-1 rounded bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-300 hover:text-emerald-200 transition-all text-[11px] flex items-center gap-1 border border-emerald-700/40"
+                    title="تحديث البيانات من السحابة - اضغط هنا إذا لم تظهر لك البيانات"
                   >
                     <RefreshCw className="w-3 h-3" />
-                    <span className="hidden sm:inline">مزامنة الآن</span>
+                    <span className="hidden sm:inline">تحديث البيانات</span>
                   </button>
                 )}
               </div>

@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow all read/write for store-scoped data
+    // Each store's data is isolated under /stores/{storeId}/
+    match /stores/{storeId}/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Legacy collections (global, for backward compatibility)
+    match /customers/{customerId} {
+      allow read, write: if true;
+    }
+
+    match /transactions/{transactionId} {
+      allow read, write: if true;
+    }
+
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    match /app/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

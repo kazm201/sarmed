@@ -24,11 +24,44 @@ import {
   CheckSquare
 } from 'lucide-react';
 
+const CloudLoadingScreen = ({ storeId, onSkip }) => (
+  <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 gap-6 animate-fadeIn">
+    <div className="flex flex-col items-center gap-4 text-center">
+      <div className="relative w-20 h-20">
+        <div className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping" />
+        <div className="relative w-20 h-20 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-2xl shadow-emerald-900/60">
+          <svg className="w-10 h-10 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+          </svg>
+        </div>
+      </div>
+      <div>
+        <h2 className="text-xl font-black text-white">جاري تحميل بياناتك من السحابة...</h2>
+        <p className="text-sm text-slate-400 mt-1">معرّف الحساب: <span className="text-emerald-400 font-bold">{storeId}</span></p>
+        <p className="text-xs text-slate-500 mt-2">يتم مزامنة الزبائن والديون تلقائياً من Firebase</p>
+      </div>
+      <div className="flex gap-1 mt-2">
+        {[0,1,2,3,4].map(i => (
+          <div key={i} className="w-2 h-2 rounded-full bg-emerald-500 animate-bounce" style={{animationDelay: `${i*0.15}s`}} />
+        ))}
+      </div>
+    </div>
+    <button
+      onClick={onSkip}
+      className="text-xs text-slate-500 hover:text-slate-300 transition-colors border border-slate-700 hover:border-slate-500 px-4 py-2 rounded-xl mt-4"
+    >
+      تخطّي والدخول مباشرةً (إذا أخذت وقتاً طويلاً)
+    </button>
+  </div>
+);
+
 const MainLayout = () => {
-  const { currentUser, isManager, isWorker, settings } = useAuth();
-  const { pendingApprovalsCount } = useData();
+  const { currentUser, isManager, isWorker, settings, storeId } = useAuth();
+  const { pendingApprovalsCount, isLoadingCloudData, cloudStatus, forceRefreshFromCloud } = useData();
   const [activePage, setActivePage] = useState(isManager ? 'dashboard' : 'add-debt');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [skipLoading, setSkipLoading] = useState(false);
 
   useEffect(() => {
     if (isWorker && !['add-debt', 'pay-debt', 'worker-ledger'].includes(activePage)) setActivePage('add-debt');
@@ -37,6 +70,17 @@ const MainLayout = () => {
   // If not logged in, show Login Screen
   if (!currentUser) {
     return <LoginPage />;
+  }
+
+  // Show cloud loading screen while fetching data on a new device
+  // Only show if: loading is active AND cloud is actually connecting (not offline/error)
+  const showLoadingScreen =
+    isLoadingCloudData &&
+    !skipLoading &&
+    cloudStatus === 'connecting';
+
+  if (showLoadingScreen) {
+    return <CloudLoadingScreen storeId={storeId} onSkip={() => setSkipLoading(true)} />;
   }
 
   // Handle protected pages for worker
