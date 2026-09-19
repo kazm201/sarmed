@@ -3,6 +3,7 @@ import {
   db,
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   updateDoc,
@@ -59,6 +60,17 @@ export const DataProvider = ({ children }) => {
   const [lastCloudSyncTime, setLastCloudSyncTime] = useState(null);
   // True while we are waiting for the first Firebase snapshot on this device
   const [isLoadingCloudData, setIsLoadingCloudData] = useState(true);
+
+  // 10-Hour Auto-Upload to Cloud Tracking
+  const getAutoSyncKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_last_auto_upload_ts`;
+  const [lastAutoSyncTime, setLastAutoSyncTime] = useState(() => {
+    try {
+      const saved = localStorage.getItem(getAutoSyncKey(activeStoreId));
+      return saved ? parseInt(saved, 10) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Reload local state whenever activeStoreId changes
   useEffect(() => {
@@ -764,8 +776,16 @@ export const DataProvider = ({ children }) => {
       setCloudStatus('connected');
       setCloudError(null);
       setLastCloudSyncTime(new Date().toLocaleTimeString('ar-IQ'));
+      const now = Date.now();
+      localStorage.setItem(getAutoSyncKey(activeStoreId), now.toString());
+      setLastAutoSyncTime(now);
       notificationService.playChime('success');
-      return { success: true, count };
+      return {
+        success: true,
+        count,
+        customersCount: customers.length,
+        transactionsCount: transactions.length
+      };
     } catch (err) {
       console.warn('Cloud sync error:', err);
       if (
@@ -784,6 +804,34 @@ export const DataProvider = ({ children }) => {
       setIsSyncing(false);
     }
   };
+
+  // Ten-Hour Automatic Cloud Sync Scheduler
+  useEffect(() => {
+    if (!activeStoreId || !db) return;
+
+    const TEN_HOURS_MS = 10 * 60 * 60 * 1000;
+
+    const checkAndTriggerAutoSync = async () => {
+      try {
+        const savedTs = localStorage.getItem(getAutoSyncKey(activeStoreId));
+        const lastSync = savedTs ? parseInt(savedTs, 10) : 0;
+        const now = Date.now();
+
+        if (!lastSync || now - lastSync >= TEN_HOURS_MS) {
+          console.log('⏰ بدء الرفع التلقائي إلى فايربيس (كل 10 ساعات)...');
+          await syncAllDataToCloud();
+          localStorage.setItem(getAutoSyncKey(activeStoreId), now.toString());
+          setLastAutoSyncTime(now);
+        }
+      } catch (err) {
+        console.warn('Auto sync check error:', err);
+      }
+    };
+
+    checkAndTriggerAutoSync();
+    const interval = setInterval(checkAndTriggerAutoSync, 5 * 60 * 1000); // Check every 5 mins
+    return () => clearInterval(interval);
+  }, [activeStoreId, customers.length, transactions.length]);
 
   // Force pull all data fresh from Firebase (for manual refresh on new device)
   const forceRefreshFromCloud = async () => {
@@ -985,6 +1033,7 @@ export const DataProvider = ({ children }) => {
         cloudStatus,
         cloudError,
         lastCloudSyncTime,
+        lastAutoSyncTime,
         isLoadingCloudData,
         isCloudConnected: cloudStatus === 'connected',
         syncAllDataToCloud,

@@ -19,13 +19,16 @@ import {
   Sparkles,
   Receipt,
   FileText,
-  FileDown
+  FileDown,
+  Cloud,
+  CloudUpload,
+  RefreshCw
 } from 'lucide-react';
 import { PrintInvoice } from '../components/common/PrintInvoice';
 import { CustomerDebtPdfModal } from '../components/common/CustomerDebtPdfModal';
 
 export const DashboardPage = ({ setActivePage }) => {
-  const { currentUser, isManager, isWorker, settings } = useAuth();
+  const { currentUser, isManager, isWorker, settings, storeId } = useAuth();
   const {
     customers,
     transactions,
@@ -34,11 +37,54 @@ export const DashboardPage = ({ setActivePage }) => {
     customersWithDebt,
     todayCollections,
     todayDebts,
-    pendingApprovalsCount
+    pendingApprovalsCount,
+    syncAllDataToCloud,
+    forceRefreshFromCloud,
+    isSyncing,
+    lastAutoSyncTime,
+    cloudStatus
   } = useData();
 
   const [selectedTxForReceipt, setSelectedTxForReceipt] = useState(null);
   const [showPdfModal, setShowPdfModal] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState(null);
+
+  const handleUploadAllToFirebase = async () => {
+    try {
+      setUploadNotice(null);
+      const res = await syncAllDataToCloud();
+      setUploadNotice({
+        type: 'success',
+        message: `تم رفع كافة بيانات المتجر بنجاح (${res.customersCount} زبون و ${res.transactionsCount} حركة مالية)! الآن إذا سجلت الدخول من أي هاتف آخر بالمعرف (${storeId}) ستظهر البيانات كاملة فوراً.`
+      });
+      setTimeout(() => setUploadNotice(null), 8000);
+    } catch (err) {
+      setUploadNotice({
+        type: 'error',
+        message: err.message?.includes('PERMISSION_DENIED')
+          ? 'قاعدة بيانات Cloud Firestore بحاجة لنقرة واحدة في لوحة تحكم فايربيس لتفعيلها وقبول البيانات السحابية.'
+          : (err.message || 'فشل الرفع إلى فايربيس'),
+        link: err.message?.includes('PERMISSION_DENIED') ? 'https://console.firebase.google.com/project/sarmed-fef02/firestore' : null
+      });
+    }
+  };
+
+  const handleFetchFromFirebase = async () => {
+    try {
+      setUploadNotice(null);
+      await forceRefreshFromCloud();
+      setUploadNotice({
+        type: 'success',
+        message: 'تم جلب وتحديث أحدث البيانات من فايربيس بنجاح!'
+      });
+      setTimeout(() => setUploadNotice(null), 5000);
+    } catch (err) {
+      setUploadNotice({
+        type: 'error',
+        message: 'تعذر جلب البيانات من السحابة حالياً.'
+      });
+    }
+  };
 
   // Recent transactions list (limit to 6)
   const recentTransactions = transactions.slice(0, 8);
@@ -98,6 +144,84 @@ export const DashboardPage = ({ setActivePage }) => {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Firebase Cloud Sync & Auto-Upload Card */}
+      <div className="p-4 sm:p-5 rounded-3xl bg-slate-900/95 border-2 border-emerald-500/40 shadow-xl space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="p-3 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-900/40 shrink-0 mt-0.5">
+              <Cloud className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm sm:text-base font-black text-white">
+                  المزامنة والرفع السحابي على فايربيس (Firebase)
+                </h3>
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-emerald-400" />
+                  الرفع التلقائي كل 10 ساعات مفعّل ✅
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                اضغط على الزر لرفع جميع أسماء الزبائن ({customers.length}) والديون ({transactions.length}) المسجلة بهذا الجهاز إلى السحابة فوراً لتظهر على كافة الأجهزة الأخرى.
+              </p>
+              {lastAutoSyncTime && (
+                <p className="text-[11px] text-emerald-400/90 mt-1 font-medium">
+                  آخر رفع سحابي: {new Date(lastAutoSyncTime).toLocaleString('ar-IQ')}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap sm:flex-nowrap">
+            <button
+              onClick={handleUploadAllToFirebase}
+              disabled={isSyncing}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-950/60 transition-all active:scale-95 disabled:opacity-50"
+            >
+              <CloudUpload className={`w-4 h-4 ${isSyncing ? 'animate-bounce' : ''}`} />
+              <span>{isSyncing ? 'جاري الرفع إلى فايربيس...' : 'رفع جميع البيانات إلى فايربيس ☁️'}</span>
+            </button>
+
+            <button
+              onClick={handleFetchFromFirebase}
+              disabled={isSyncing}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs sm:text-sm transition-all active:scale-95 disabled:opacity-50"
+              title="جلب وتحديث البيانات من السحابة إذا قمت بالتعديل من جهاز آخر"
+            >
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+              <span>تحديث من السحابة 🔄</span>
+            </button>
+          </div>
+        </div>
+
+        {uploadNotice && (
+          <div className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 animate-fadeIn ${
+            uploadNotice.type === 'success'
+              ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-800'
+              : 'bg-amber-950/90 text-amber-300 border border-amber-800'
+          }`}>
+            <div className="flex items-center gap-2">
+              {uploadNotice.type === 'success' ? (
+                <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              )}
+              <span>{uploadNotice.message}</span>
+            </div>
+            {uploadNotice.link && (
+              <a
+                href={uploadNotice.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-bold text-[11px] shrink-0 hover:bg-amber-400 transition-all"
+              >
+                فتح فايربيس للتفعيل
+              </a>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Pending Approval Alert Banner for Manager */}

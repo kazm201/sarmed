@@ -21,7 +21,8 @@ import {
   Sun,
   Moon,
   ArrowRightLeft,
-  KeyRound
+  KeyRound,
+  CloudUpload
 } from 'lucide-react';
 import { notificationService } from '../../services/notificationService';
 import { DeviceSyncModal } from '../common/DeviceSyncModal';
@@ -44,6 +45,27 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
 
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [showDeviceSyncModal, setShowDeviceSyncModal] = useState(false);
+  const [uploadFeedback, setUploadFeedback] = useState(null);
+
+  const handleManualUploadToFirebase = async () => {
+    try {
+      setUploadFeedback(null);
+      const res = await syncAllDataToCloud();
+      setUploadFeedback({
+        type: 'success',
+        message: `تم رفع ${res.customersCount} زبون و ${res.transactionsCount} حركة إلى فايربيس بنجاح! ستظهر للأجهزة الأخرى فوراً.`
+      });
+      setTimeout(() => setUploadFeedback(null), 5000);
+    } catch (err) {
+      setUploadFeedback({
+        type: 'error',
+        message: err.message?.includes('PERMISSION_DENIED')
+          ? 'قاعدة بيانات Firestore بحاجة لتفعيل بنقرة واحدة في فايربيس'
+          : (err.message || 'تعذر الرفع إلى السحابة')
+      });
+      setTimeout(() => setUploadFeedback(null), 6000);
+    }
+  };
   const notifRef = useRef(null);
 
   // Close notifications dropdown when clicking outside
@@ -270,6 +292,18 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
             )}
           </div>
 
+          {/* Prominent Upload to Firebase Button */}
+          <button
+            onClick={handleManualUploadToFirebase}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-950/40 transition-all active:scale-95 disabled:opacity-50"
+            title="رفع جميع البيانات والزبائن إلى فايربيس السحابية لتظهر لكافة الأجهزة"
+          >
+            <CloudUpload className={`w-4 h-4 ${isSyncing ? 'animate-bounce' : ''}`} />
+            <span className="hidden sm:inline">رفع إلى فايربيس ☁️</span>
+            <span className="sm:hidden">رفع ☁️</span>
+          </button>
+
           {/* Quick Device Sync / Transfer Button */}
           <button
             onClick={() => setShowDeviceSyncModal(true)}
@@ -277,7 +311,7 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
             title="مزامنة ونقل سريع بين الأجهزة برابط واتساب أو كود أو QR"
           >
             <ArrowRightLeft className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-[11px]">مزامنة الأجهزة 📲</span>
+            <span className="text-[11px] hidden md:inline">مزامنة الأجهزة 📲</span>
           </button>
 
           {/* Logout Action */}
@@ -291,6 +325,32 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
           </button>
         </div>
       </div>
+
+      {/* Floating Upload Feedback Toast */}
+      {uploadFeedback && (
+        <div className="max-w-4xl mx-auto mt-2 px-4 animate-fadeIn">
+          <div className={`p-3 rounded-2xl text-xs font-bold flex items-center justify-between gap-3 shadow-2xl ${
+            uploadFeedback.type === 'success'
+              ? 'bg-emerald-950/95 text-emerald-300 border-2 border-emerald-500/80'
+              : 'bg-amber-950/95 text-amber-300 border-2 border-amber-500/80'
+          }`}>
+            <div className="flex items-center gap-2">
+              {uploadFeedback.type === 'success' ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+              )}
+              <span className="leading-relaxed">{uploadFeedback.message}</span>
+            </div>
+            <button
+              onClick={() => setUploadFeedback(null)}
+              className="p-1 rounded-lg hover:bg-white/10 text-slate-300 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Device Sync Modal */}
       <DeviceSyncModal
