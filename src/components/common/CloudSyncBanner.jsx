@@ -12,11 +12,13 @@ import {
   ChevronDown,
   ChevronUp,
   Smartphone,
-  ShieldAlert
+  ShieldAlert,
+  ArrowRightLeft
 } from 'lucide-react';
+import { DeviceSyncModal } from './DeviceSyncModal';
 
 export const CloudSyncBanner = () => {
-  const { isManager } = useAuth();
+  const { isManager, storeId } = useAuth();
   const {
     cloudStatus,
     cloudError,

@@ -8,55 +8,62 @@ import {
   updateDoc,
   deleteDoc,
   addDoc,
-  onSnapshot,
-  query,
-  orderBy,
-  serverTimestamp
+  onSnapshot
 } from '../services/firebase';
-import { useAuth } from './AuthContext';
+import { useAuth, getSavedStoreId, DEFAULT_STORE_ID } from './AuthContext';
 import { notificationService } from '../services/notificationService';
 
 const DataContext = createContext();
 
-const LOCAL_CUSTOMERS_KEY = 'sarmed_customers_db';
-const LOCAL_TRANSACTIONS_KEY = 'sarmed_transactions_db';
-const LOCAL_NOTIFICATIONS_KEY = 'sarmed_notifications_db';
+// Local Storage Key Builders by Store ID
+const getCustomersKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_customers_db`;
+const getTransactionsKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_transactions_db`;
+const getNotificationsKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_notifications_db`;
+
+const loadInitialScopedData = (key, legacyKey) => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) return JSON.parse(saved);
+    if (legacyKey) {
+      const legacy = localStorage.getItem(legacyKey);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        localStorage.setItem(key, legacy);
+        return parsed;
+      }
+    }
+  } catch {}
+  return [];
+};
 
 export const DataProvider = ({ children }) => {
-  const { currentUser, isManager, settings } = useAuth();
+  const { currentUser, isManager, settings, storeId: authStoreId, updateSettings } = useAuth();
+  const activeStoreId = authStoreId || currentUser?.storeId || getSavedStoreId() || DEFAULT_STORE_ID;
 
-  const [customers, setCustomers] = useState(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_CUSTOMERS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [customers, setCustomers] = useState(() =>
+    loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db')
+  );
 
-  const [transactions, setTransactions] = useState(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_TRANSACTIONS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [transactions, setTransactions] = useState(() =>
+    loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db')
+  );
 
-  const [notifications, setNotifications] = useState(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [notifications, setNotifications] = useState(() =>
+    loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db')
+  );
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [cloudStatus, setCloudStatus] = useState('connecting'); // 'connecting' | 'connected' | 'needs_activation' | 'error' | 'offline'
   const [cloudError, setCloudError] = useState(null);
   const [lastCloudSyncTime, setLastCloudSyncTime] = useState(null);
+
+  // Reload local state whenever activeStoreId changes
+  useEffect(() => {
+    setCustomers(loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db'));
+    setTransactions(loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db'));
+    setNotifications(loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db'));
+  }, [activeStoreId]);
 
   // Monitor Network Online/Offline Status
   useEffect(() => {
@@ -81,31 +88,38 @@ export const DataProvider = ({ children }) => {
   // Save to persistent storage whenever state changes
   useEffect(() => {
     try {
-      localStorage.setItem(LOCAL_CUSTOMERS_KEY, JSON.stringify(customers));
+      localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(customers));
+      // Keep legacy key updated if default store
+      if (activeStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_customers_db', JSON.stringify(customers));
+      }
     } catch (e) {
       console.warn('Failed to save customers locally', e);
     }
-  }, [customers]);
+  }, [customers, activeStoreId]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(LOCAL_TRANSACTIONS_KEY, JSON.stringify(transactions));
+      localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(transactions));
+      if (activeStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_transactions_db', JSON.stringify(transactions));
+      }
     } catch (e) {
       console.warn('Failed to save transactions locally', e);
     }
-  }, [transactions]);
+  }, [transactions, activeStoreId]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+      localStorage.setItem(getNotificationsKey(activeStoreId), JSON.stringify(notifications));
     } catch (e) {
       console.warn('Failed to save notifications locally', e);
     }
-  }, [notifications]);
+  }, [notifications, activeStoreId]);
 
-  // Firestore Realtime Synchronization (When db is initialized and live)
+  // Firestore Realtime Synchronization by Store ID
   useEffect(() => {
-    if (!db) {
+    if (!db || !activeStoreId) {
       setCloudStatus('offline');
       return;
     }
@@ -117,10 +131,10 @@ export const DataProvider = ({ children }) => {
     try {
       setIsSyncing(true);
 
-      // 1. Listen to Customers Collection (No hardcoded orderBy to avoid missing records or index requirements)
-      const custCollection = collection(db, 'customers');
+      // 1. Listen to store-scoped Customers Collection
+      const storeCustCollection = collection(db, 'stores', activeStoreId, 'customers');
       unsubCustomers = onSnapshot(
-        custCollection,
+        storeCustCollection,
         (snapshot) => {
           setCloudStatus('connected');
           setCloudError(null);
@@ -131,13 +145,14 @@ export const DataProvider = ({ children }) => {
             const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
             list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
 
-            // Push any customers existing in local buffer that are missing in cloud
+            // Push any local customers missing in cloud
             try {
-              const localSaved = JSON.parse(localStorage.getItem(LOCAL_CUSTOMERS_KEY) || '[]');
+              const localSaved = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
               const missingOnRemote = localSaved.filter((lc) => !list.some((rc) => rc.id === lc.id));
               if (missingOnRemote.length > 0) {
-                console.log('🔄 رفع زبائن محليين إلى السحابة:', missingOnRemote.length);
+                console.log(`🔄 رفع زبائن محليين إلى السحابة للمتجر [${activeStoreId}]:`, missingOnRemote.length);
                 missingOnRemote.forEach((c) => {
+                  void setDoc(doc(db, 'stores', activeStoreId, 'customers', c.id), c).catch(() => {});
                   void setDoc(doc(db, 'customers', c.id), c).catch(() => {});
                 });
               }
@@ -145,12 +160,13 @@ export const DataProvider = ({ children }) => {
 
             setCustomers(list);
           } else {
-            // Snapshot is empty: If local storage has customers, upload them all to cloud!
+            // Cloud is empty for this store ID -> Push all local data to cloud
             try {
-              const localSaved = JSON.parse(localStorage.getItem(LOCAL_CUSTOMERS_KEY) || '[]');
+              const localSaved = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
               if (localSaved.length > 0) {
-                console.log('🔄 رفع جميع الزبائن إلى السحابة لأول مرة:', localSaved.length);
+                console.log(`🔄 رفع جميع زبائن المتجر [${activeStoreId}] إلى السحابة:`, localSaved.length);
                 localSaved.forEach((c) => {
+                  void setDoc(doc(db, 'stores', activeStoreId, 'customers', c.id), c).catch(() => {});
                   void setDoc(doc(db, 'customers', c.id), c).catch(() => {});
                 });
               }
@@ -175,10 +191,10 @@ export const DataProvider = ({ children }) => {
         }
       );
 
-      // 2. Listen to Transactions Collection
-      const transCollection = collection(db, 'transactions');
+      // 2. Listen to store-scoped Transactions Collection
+      const storeTransCollection = collection(db, 'stores', activeStoreId, 'transactions');
       unsubTransactions = onSnapshot(
-        transCollection,
+        storeTransCollection,
         (snapshot) => {
           if (!snapshot.empty) {
             const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -186,11 +202,11 @@ export const DataProvider = ({ children }) => {
 
             // Sync any local transactions not yet in cloud
             try {
-              const localSaved = JSON.parse(localStorage.getItem(LOCAL_TRANSACTIONS_KEY) || '[]');
+              const localSaved = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
               const missingOnRemote = localSaved.filter((lt) => !list.some((rt) => rt.id === lt.id));
               if (missingOnRemote.length > 0) {
-                console.log('🔄 رفع حركات مالية محلية إلى السحابة:', missingOnRemote.length);
                 missingOnRemote.forEach((t) => {
+                  void setDoc(doc(db, 'stores', activeStoreId, 'transactions', t.id), t).catch(() => {});
                   void setDoc(doc(db, 'transactions', t.id), t).catch(() => {});
                 });
               }
@@ -199,10 +215,10 @@ export const DataProvider = ({ children }) => {
             setTransactions(list);
           } else {
             try {
-              const localSaved = JSON.parse(localStorage.getItem(LOCAL_TRANSACTIONS_KEY) || '[]');
+              const localSaved = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
               if (localSaved.length > 0) {
-                console.log('🔄 رفع الحركات المالية إلى السحابة لأول مرة:', localSaved.length);
                 localSaved.forEach((t) => {
+                  void setDoc(doc(db, 'stores', activeStoreId, 'transactions', t.id), t).catch(() => {});
                   void setDoc(doc(db, 'transactions', t.id), t).catch(() => {});
                 });
               }
@@ -214,10 +230,10 @@ export const DataProvider = ({ children }) => {
         }
       );
 
-      // 3. Listen to Notifications Collection
-      const notifCollection = collection(db, 'notifications');
+      // 3. Listen to store-scoped Notifications Collection
+      const storeNotifCollection = collection(db, 'stores', activeStoreId, 'notifications');
       unsubNotifications = onSnapshot(
-        notifCollection,
+        storeNotifCollection,
         (snapshot) => {
           if (!snapshot.empty) {
             const list = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
@@ -225,9 +241,7 @@ export const DataProvider = ({ children }) => {
             setNotifications(list);
           }
         },
-        (error) => {
-          console.info('Firestore notifications offline/fallback mode');
-        }
+        (error) => {}
       );
     } catch (err) {
       console.warn('Firebase snapshot listener initialization notice:', err);
@@ -239,7 +253,7 @@ export const DataProvider = ({ children }) => {
       unsubTransactions();
       unsubNotifications();
     };
-  }, []);
+  }, [activeStoreId]);
 
   // --- ACTIONS ---
 
@@ -251,6 +265,7 @@ export const DataProvider = ({ children }) => {
     const customerId = 'cust_' + Date.now();
     const newCustomer = {
       id: customerId,
+      storeId: activeStoreId,
       name: name.trim(),
       phone: phone.trim(),
       address: address.trim(),
@@ -267,12 +282,13 @@ export const DataProvider = ({ children }) => {
     if (parsedInitialDebt > 0) {
       const initialTx = {
         id: 'tx_' + Date.now(),
+        storeId: activeStoreId,
         customerId: customerId,
         customerName: newCustomer.name,
-        type: 'debt', // 'debt' or 'payment'
+        type: 'debt',
         amount: parsedInitialDebt,
         details: 'رصيد دين سابق عند إنشاء الحساب',
-        date: new Date().toISOString(),
+        date: new Date().toISOString().split('T')[0],
         createdBy: currentUser?.name || 'المدير',
         creatorRole: currentUser?.role || 'manager',
         status: 'approved',
@@ -282,6 +298,7 @@ export const DataProvider = ({ children }) => {
 
       if (db) {
         try {
+          void setDoc(doc(db, 'stores', activeStoreId, 'transactions', initialTx.id), initialTx).catch(() => {});
           void setDoc(doc(db, 'transactions', initialTx.id), initialTx).catch(() => {});
         } catch (e) {}
       }
@@ -290,9 +307,10 @@ export const DataProvider = ({ children }) => {
     // Sync to Firestore
     if (db) {
       try {
+        void setDoc(doc(db, 'stores', activeStoreId, 'customers', customerId), newCustomer).catch(() => {});
         void setDoc(doc(db, 'customers', customerId), newCustomer).catch(() => {});
       } catch (err) {
-        console.warn('Firestore add customer synced to local buffer');
+        console.warn('Firestore add customer buffered locally');
       }
     }
 
@@ -312,6 +330,7 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
+        void updateDoc(doc(db, 'stores', activeStoreId, 'customers', id), updated).catch(() => {});
         void updateDoc(doc(db, 'customers', id), updated).catch(() => {});
       } catch (err) {
         console.warn('Firestore update customer notice', err);
@@ -326,6 +345,7 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
+        void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', id)).catch(() => {});
         void deleteDoc(doc(db, 'customers', id)).catch(() => {});
       } catch (err) {
         console.warn('Firestore delete customer notice', err);
@@ -338,10 +358,11 @@ export const DataProvider = ({ children }) => {
     const notifId = 'notif_' + Date.now();
     const newNotif = {
       id: notifId,
+      storeId: activeStoreId,
       title,
       message,
-      targetRole, // 'manager' | 'worker' | 'all'
-      type, // 'alert' | 'success' | 'warning' | 'info'
+      targetRole,
+      type,
       read: false,
       meta,
       createdAt: new Date().toISOString()
@@ -357,6 +378,7 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
+        void setDoc(doc(db, 'stores', activeStoreId, 'notifications', notifId), newNotif).catch(() => {});
         void setDoc(doc(db, 'notifications', notifId), newNotif).catch(() => {});
       } catch (e) {}
     }
@@ -367,7 +389,6 @@ export const DataProvider = ({ children }) => {
     const parsedAmount = parseFloat(amount) || 0;
     if (parsedAmount <= 0) throw new Error('المبلغ يجب أن يكون أكبر من صفر');
 
-    // customerData supports the just-created customer before React state has re-rendered.
     const customer = customerData || customers.find((c) => c.id === customerId);
     if (!customer) throw new Error('الزبون غير موجود');
 
@@ -378,6 +399,7 @@ export const DataProvider = ({ children }) => {
     const txId = 'tx_' + Date.now();
     const newTx = {
       id: txId,
+      storeId: activeStoreId,
       customerId,
       customerName: customer.name,
       type: 'debt',
@@ -387,11 +409,10 @@ export const DataProvider = ({ children }) => {
       invoicePhoto,
       createdBy: currentUser?.name || 'مستخدم',
       creatorRole: currentUser?.role || 'worker',
-      status, // 'approved' | 'pending' | 'rejected'
+      status,
       createdAt: new Date().toISOString()
     };
 
-    // If auto-approved (manager or worker without approval lock)
     if (status === 'approved') {
       const updatedDebt = (customer.currentDebt || 0) + parsedAmount;
       updateCustomer(customerId, {
@@ -404,20 +425,23 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
+        void setDoc(doc(db, 'stores', activeStoreId, 'transactions', txId), newTx).catch(() => {});
         void setDoc(doc(db, 'transactions', txId), newTx).catch(() => {});
       } catch (e) {}
     }
 
-    // Trigger notification if worker created pending debt
     if (status === 'pending') {
-      // A notification failure must never prevent a successfully saved debt.
-      try { await dispatchNotification({
-        title: 'طلب موافقة على دين جديد 🔔',
-        message: `قام العامل "${newTx.createdBy}" بإضافة دين للزبون "${customer.name}" بقيمة ${parsedAmount.toLocaleString()} ${settings.currency}. بانتظار موافقتك.`,
-        targetRole: 'manager',
-        type: 'alert',
-        meta: { txId: newTx.id, type: 'debt', customerId }
-      }); } catch (error) { console.warn('Approval notification queued locally failed:', error); }
+      try {
+        await dispatchNotification({
+          title: 'طلب موافقة على دين جديد 🔔',
+          message: `قام العامل "${newTx.createdBy}" بإضافة دين للزبون "${customer.name}" بقيمة ${parsedAmount.toLocaleString()} ${settings.currency}. بانتظار موافقتك.`,
+          targetRole: 'manager',
+          type: 'alert',
+          meta: { txId: newTx.id, type: 'debt', customerId }
+        });
+      } catch (error) {
+        console.warn('Approval notification queued locally failed:', error);
+      }
     } else {
       notificationService.playChime('success');
     }
@@ -440,6 +464,7 @@ export const DataProvider = ({ children }) => {
     const txId = 'tx_' + Date.now();
     const newTx = {
       id: txId,
+      storeId: activeStoreId,
       customerId,
       customerName: customer.name,
       type: 'payment',
@@ -453,7 +478,6 @@ export const DataProvider = ({ children }) => {
       createdAt: new Date().toISOString()
     };
 
-    // If auto-approved
     if (status === 'approved') {
       const updatedDebt = Math.max(0, (customer.currentDebt || 0) - parsedAmount);
       updateCustomer(customerId, {
@@ -466,19 +490,23 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
+        void setDoc(doc(db, 'stores', activeStoreId, 'transactions', txId), newTx).catch(() => {});
         void setDoc(doc(db, 'transactions', txId), newTx).catch(() => {});
       } catch (e) {}
     }
 
-    // Trigger notification if worker created pending settlement
     if (status === 'pending') {
-      try { await dispatchNotification({
-        title: 'طلب موافقة على تسديد دفعة 💵',
-        message: `قام العامل "${newTx.createdBy}" بتسجيل تسديد من الزبون "${customer.name}" بمبلغ ${parsedAmount.toLocaleString()} ${settings.currency}. بانتظار موافقتك.`,
-        targetRole: 'manager',
-        type: 'alert',
-        meta: { txId: newTx.id, type: 'payment', customerId }
-      }); } catch (error) { console.warn('Approval notification queued locally failed:', error); }
+      try {
+        await dispatchNotification({
+          title: 'طلب موافقة على تسديد دفعة 💵',
+          message: `قام العامل "${newTx.createdBy}" بتسجيل تسديد من الزبون "${customer.name}" بمبلغ ${parsedAmount.toLocaleString()} ${settings.currency}. بانتظار موافقتك.`,
+          targetRole: 'manager',
+          type: 'alert',
+          meta: { txId: newTx.id, type: 'payment', customerId }
+        });
+      } catch (error) {
+        console.warn('Approval notification queued locally failed:', error);
+      }
     } else {
       notificationService.playChime('success');
     }
@@ -486,7 +514,7 @@ export const DataProvider = ({ children }) => {
     return newTx;
   };
 
-  // Approve Pending Transaction (Manager Only)
+  // Approve Pending Transaction
   const approveTransaction = async (txId) => {
     const tx = transactions.find((t) => t.id === txId);
     if (!tx || tx.status !== 'pending') return;
@@ -519,6 +547,11 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
+        void updateDoc(doc(db, 'stores', activeStoreId, 'transactions', txId), {
+          status: 'approved',
+          approvedAt: updatedTx.approvedAt,
+          approvedBy: updatedTx.approvedBy
+        }).catch(() => {});
         void updateDoc(doc(db, 'transactions', txId), {
           status: 'approved',
           approvedAt: updatedTx.approvedAt,
@@ -527,7 +560,6 @@ export const DataProvider = ({ children }) => {
       } catch (e) {}
     }
 
-    // Notify worker of approval
     await dispatchNotification({
       title: 'تم اعتماد العملية بنجاح ✅',
       message: `وافق المدير على عملية ${tx.type === 'debt' ? 'إضافة دين' : 'تسديد'} للزبون "${tx.customerName}" بمبلغ ${tx.amount.toLocaleString()} ${settings.currency}.`,
@@ -539,7 +571,7 @@ export const DataProvider = ({ children }) => {
     notificationService.playChime('success');
   };
 
-  // Reject Pending Transaction (Manager Only)
+  // Reject Pending Transaction
   const rejectTransaction = async (txId, reason = 'لم يتم التوضيح') => {
     const tx = transactions.find((t) => t.id === txId);
     if (!tx || tx.status !== 'pending') return;
@@ -558,7 +590,7 @@ export const DataProvider = ({ children }) => {
 
     if (db) {
       try {
-        void updateDoc(doc(db, 'transactions', txId), {
+        void updateDoc(doc(db, 'stores', activeStoreId, 'transactions', txId), {
           status: 'rejected',
           rejectionReason: reason,
           rejectedAt: updatedTx.rejectedAt,
@@ -567,7 +599,6 @@ export const DataProvider = ({ children }) => {
       } catch (e) {}
     }
 
-    // Notify worker of rejection
     await dispatchNotification({
       title: 'تم رفض العملية ❌',
       message: `تم رفض عملية ${tx.type === 'debt' ? 'الدين' : 'التسديد'} للزبون "${tx.customerName}". السبب: ${reason}`,
@@ -579,20 +610,18 @@ export const DataProvider = ({ children }) => {
     notificationService.playChime('error');
   };
 
-  // Mark notification as read
   const markNotificationRead = (notifId) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === notifId ? { ...n, read: true } : n))
     );
   };
 
-  // Clear all notifications
   const clearAllNotifications = () => {
     setNotifications([]);
-    localStorage.removeItem(LOCAL_NOTIFICATIONS_KEY);
+    localStorage.removeItem(getNotificationsKey(activeStoreId));
   };
 
-  const STATS_RESET_KEY = 'sarmed_stats_reset_timestamp';
+  const STATS_RESET_KEY = `sarmed_${activeStoreId}_stats_reset_timestamp`;
   const [statsResetTimestamp, setStatsResetTimestamp] = useState(() => {
     try {
       return parseInt(localStorage.getItem(STATS_RESET_KEY) || '0', 10);
@@ -601,7 +630,6 @@ export const DataProvider = ({ children }) => {
     }
   });
 
-  // Local calendar date helper (prevents UTC timezone offset issues in Iraq GMT+3)
   const getLocalDateStr = () => {
     const now = new Date();
     const year = now.getFullYear();
@@ -612,8 +640,6 @@ export const DataProvider = ({ children }) => {
 
   const [currentDateStr, setCurrentDateStr] = useState(getLocalDateStr());
 
-  // Automatic 24-hour Daily Statistics Cycle
-  // Runs every 60 seconds to ensure stats reset automatically when a new day arrives
   useEffect(() => {
     const interval = setInterval(() => {
       const today = getLocalDateStr();
@@ -624,7 +650,6 @@ export const DataProvider = ({ children }) => {
     return () => clearInterval(interval);
   }, [currentDateStr]);
 
-  // Safe Statistics Reset & Audit (Only resets stats and repairs calculation errors; NEVER deletes customers)
   const resetStatisticsOnly = async () => {
     const now = Date.now();
     setStatsResetTimestamp(now);
@@ -632,7 +657,6 @@ export const DataProvider = ({ children }) => {
       localStorage.setItem(STATS_RESET_KEY, now.toString());
     } catch (e) {}
 
-    // Audit and heal customer balances based strictly on approved ledger transactions
     let correctedCount = 0;
     const auditedCustomers = customers.map((cust) => {
       const custTxs = transactions.filter(
@@ -650,7 +674,7 @@ export const DataProvider = ({ children }) => {
         correctedCount++;
         if (db) {
           try {
-            void updateDoc(doc(db, 'customers', cust.id), {
+            void updateDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), {
               currentDebt: accurateDebt,
               updatedAt: new Date().toISOString()
             }).catch(() => {});
@@ -669,34 +693,17 @@ export const DataProvider = ({ children }) => {
     return { correctedCount, totalAudited: customers.length };
   };
 
-  // ⚠️ Full Data Wipe (kept for master administrative fallback only)
   const resetAllData = async () => {
     setCustomers([]);
     setTransactions([]);
     setNotifications([]);
-    localStorage.removeItem(LOCAL_CUSTOMERS_KEY);
-    localStorage.removeItem(LOCAL_TRANSACTIONS_KEY);
-    localStorage.removeItem(LOCAL_NOTIFICATIONS_KEY);
+    localStorage.removeItem(getCustomersKey(activeStoreId));
+    localStorage.removeItem(getTransactionsKey(activeStoreId));
+    localStorage.removeItem(getNotificationsKey(activeStoreId));
     localStorage.removeItem(STATS_RESET_KEY);
-
-    if (db) {
-      try {
-        const { getDocs, writeBatch, collection: col } = await import('../services/firebase');
-        const batch = writeBatch(db);
-        const customerSnap = await getDocs(col(db, 'customers'));
-        customerSnap.forEach((d) => batch.delete(d.ref));
-        const txSnap = await getDocs(col(db, 'transactions'));
-        txSnap.forEach((d) => batch.delete(d.ref));
-        const notifSnap = await getDocs(col(db, 'notifications'));
-        notifSnap.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      } catch (e) {
-        console.warn('Firestore reset notice:', e);
-      }
-    }
   };
 
-  // Full Manual or Automatic Cloud Synchronization
+  // Full Cloud Push for Active Store
   const syncAllDataToCloud = async () => {
     if (!db) throw new Error('خدمة Firebase غير مهيأة');
     setIsSyncing(true);
@@ -704,24 +711,27 @@ export const DataProvider = ({ children }) => {
     try {
       // 1. Sync Settings
       if (settings) {
+        await setDoc(doc(db, 'stores', activeStoreId, 'config', 'settings'), settings, { merge: true });
         await setDoc(doc(db, 'app', 'settings'), settings, { merge: true });
       }
 
       // 2. Sync Customers
       for (const cust of customers) {
+        await setDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), cust, { merge: true });
         await setDoc(doc(db, 'customers', cust.id), cust, { merge: true });
         count++;
       }
 
       // 3. Sync Transactions
       for (const tx of transactions) {
+        await setDoc(doc(db, 'stores', activeStoreId, 'transactions', tx.id), tx, { merge: true });
         await setDoc(doc(db, 'transactions', tx.id), tx, { merge: true });
         count++;
       }
 
       // 4. Sync Notifications
       for (const notif of notifications) {
-        await setDoc(doc(db, 'notifications', notif.id), notif, { merge: true });
+        await setDoc(doc(db, 'stores', activeStoreId, 'notifications', notif.id), notif, { merge: true });
       }
 
       setCloudStatus('connected');
@@ -748,12 +758,64 @@ export const DataProvider = ({ children }) => {
     }
   };
 
+  // Direct Device-to-Device Import / Sync
+  const importStoreData = async (incomingData) => {
+    if (!incomingData || typeof incomingData !== 'object') {
+      throw new Error('صيغة البيانات غير صحيحة');
+    }
+
+    const incomingCustomers = Array.isArray(incomingData.customers) ? incomingData.customers : [];
+    const incomingTransactions = Array.isArray(incomingData.transactions) ? incomingData.transactions : [];
+
+    // Merge customers
+    setCustomers((prev) => {
+      const map = new Map(prev.map((c) => [c.id, c]));
+      incomingCustomers.forEach((c) => map.set(c.id, c));
+      const merged = Array.from(map.values());
+      localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(merged));
+      return merged;
+    });
+
+    // Merge transactions
+    setTransactions((prev) => {
+      const map = new Map(prev.map((t) => [t.id, t]));
+      incomingTransactions.forEach((t) => map.set(t.id, t));
+      const merged = Array.from(map.values());
+      localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(merged));
+      return merged;
+    });
+
+    if (incomingData.settings) {
+      updateSettings(incomingData.settings);
+    }
+
+    notificationService.playChime('success');
+    void syncAllDataToCloud().catch(() => {});
+
+    return {
+      customersCount: incomingCustomers.length,
+      transactionsCount: incomingTransactions.length
+    };
+  };
+
+  // Direct Device-to-Device Export Payload
+  const exportStoreData = () => {
+    return {
+      storeId: activeStoreId,
+      version: '2.0',
+      exportedAt: new Date().toISOString(),
+      storeName: settings.storeName,
+      customers,
+      transactions,
+      settings
+    };
+  };
+
   // Computed Financial Metrics & Stats
   const totalDebt = customers.reduce((acc, c) => acc + (parseFloat(c.currentDebt) || 0), 0);
   const totalCustomers = customers.length;
   const customersWithDebt = customers.filter((c) => (parseFloat(c.currentDebt) || 0) > 0).length;
 
-  // 24-Hour Cycle Transactions: transactions created today in local time, AND after any manual stats reset
   const todayTransactions = transactions.filter((t) => {
     if (t.status !== 'approved') return false;
     const isToday = t.date === currentDateStr || (t.createdAt && t.createdAt.startsWith(currentDateStr));
@@ -784,6 +846,7 @@ export const DataProvider = ({ children }) => {
   return (
     <DataContext.Provider
       value={{
+        storeId: activeStoreId,
         customers,
         transactions,
         notifications: userNotifications,
@@ -795,6 +858,8 @@ export const DataProvider = ({ children }) => {
         lastCloudSyncTime,
         isCloudConnected: cloudStatus === 'connected',
         syncAllDataToCloud,
+        importStoreData,
+        exportStoreData,
         totalDebt,
         totalCustomers,
         customersWithDebt,

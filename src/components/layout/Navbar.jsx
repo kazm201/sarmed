@@ -19,12 +19,15 @@ import {
   X,
   Volume2,
   Sun,
-  Moon
+  Moon,
+  ArrowRightLeft,
+  KeyRound
 } from 'lucide-react';
 import { notificationService } from '../../services/notificationService';
+import { DeviceSyncModal } from '../common/DeviceSyncModal';
 
 export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
-  const { currentUser, isManager, isWorker, logout, settings, updateSettings } = useAuth();
+  const { currentUser, isManager, isWorker, logout, settings, updateSettings, storeId } = useAuth();
   const {
     notifications,
     unreadNotificationsCount,
@@ -38,6 +41,7 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
   } = useData();
 
   const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const [showDeviceSyncModal, setShowDeviceSyncModal] = useState(false);
   const notifRef = useRef(null);
 
   // Close notifications dropdown when clicking outside
@@ -83,6 +87,9 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
             <div>
               <h1 className="text-base sm:text-lg font-bold text-white tracking-wide leading-tight flex items-center gap-2">
                 {settings.storeName || 'نظام إدارة الديون'}
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-emerald-950/90 text-emerald-300 border border-emerald-800/80" title="معرّف الحساب النشط">
+                  ID: {storeId}
+                </span>
                 <span className="hidden sm:inline-block text-xs font-normal px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
                   PWA ⚡
                 </span>
@@ -261,6 +268,16 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
             )}
           </div>
 
+          {/* Quick Device Sync / Transfer Button */}
+          <button
+            onClick={() => setShowDeviceSyncModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all active:scale-95 shadow-sm"
+            title="مزامنة ونقل سريع بين الأجهزة بكود أو QR"
+          >
+            <ArrowRightLeft className="w-4 h-4 text-emerald-400" />
+            <span className="hidden sm:inline">مزامنة الأجهزة</span>
+          </button>
+
           {/* Logout Action */}
           <button
             onClick={logout}
@@ -272,6 +289,12 @@ export const Navbar = ({ onToggleSidebar, activePage, setActivePage }) => {
           </button>
         </div>
       </div>
+
+      {/* Device Sync Modal */}
+      <DeviceSyncModal
+        isOpen={showDeviceSyncModal}
+        onClose={() => setShowDeviceSyncModal(false)}
+      />
     </header>
   );
 };
