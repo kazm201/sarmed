@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { db, doc, setDoc, onSnapshot } from '../services/firebase';
+import { getDb, doc, setDoc, onSnapshot } from '../services/firebase';
+const db = getDb();
+
 
 const AuthContext = createContext();
 const AUTH_STORAGE_KEY = 'sarmed_user_session';

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
-  db,
+  getDb,
   collection,
   doc,
   getDoc,
@@ -13,6 +13,10 @@ import {
 } from '../services/firebase';
 import { useAuth, getSavedStoreId, DEFAULT_STORE_ID } from './AuthContext';
 import { notificationService } from '../services/notificationService';
+
+// ✅ Always get the live Firestore instance (not a stale null from module init)
+const db = getDb();
+
 
 const DataContext = createContext();
 

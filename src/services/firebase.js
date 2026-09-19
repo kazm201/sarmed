@@ -1,5 +1,4 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAnalytics } from 'firebase/analytics';
+import { initializeApp, getApps, getApp as _getApp } from 'firebase/app';
 import {
   initializeFirestore,
   getFirestore,
@@ -33,13 +32,11 @@ const DEFAULT_FIREBASE_CONFIG = {
   measurementId: "G-6PH1N07E1F"
 };
 
-// الحصول على إعدادات Firebase النشطة (المخصصة أو الافتراضية)
+// الحصول على إعدادات Firebase النشطة
 export const getActiveFirebaseConfig = () => {
   try {
     const saved = localStorage.getItem('sarmed_firebase_config');
-    if (saved) {
-      return JSON.parse(saved);
-    }
+    if (saved) return JSON.parse(saved);
   } catch (e) {
     console.warn('Error reading saved firebase config', e);
   }
@@ -52,60 +49,49 @@ export const saveFirebaseConfig = (config) => {
   window.location.reload();
 };
 
-let app = null;
-let db = null;
-let analytics = null;
+// ✅ Initialize Firebase once
+let _app = null;
+let _db = null;
 
-export const initFirebase = () => {
+const _init = (() => {
   const config = getActiveFirebaseConfig();
   try {
-    // تهيئة Firebase App
-    if (!getApps().length) {
-      app = initializeApp(config);
-    } else {
-      app = getApp();
-    }
-
-    // تهيئة Analytics (داخل المتصفح فقط)
-    try {
-      if (typeof window !== 'undefined') {
-        analytics = getAnalytics(app);
-        console.log('✅ Firebase Analytics مفعّل');
-      }
-    } catch (analyticsErr) {
-      console.info('Analytics init skipped:', analyticsErr.message);
-    }
-
-    // تهيئة Firestore مع التخزين المحلي المؤقت متعدد التبويب
-    try {
-      db = initializeFirestore(app, {
-        localCache: persistentLocalCache({
-          tabManager: persistentMultipleTabManager()
-        })
-      });
-      console.log('✅ Firestore مفعّل مع التخزين المحلي التلقائي (IndexedDB)');
-    } catch (fsErr) {
-      try {
-        db = getFirestore(app);
-        console.log('✅ Firestore مفعّل عبر getFirestore القياسي');
-      } catch (fallbackErr) {
-        console.warn('Firestore initialization notice:', fsErr, fallbackErr);
-      }
-    }
+    _app = getApps().length ? _getApp() : initializeApp(config);
   } catch (err) {
-    console.warn('Firebase init notice:', err);
+    console.warn('Firebase App init failed:', err.message);
   }
 
-  return { app, db };
-};
+  if (_app) {
+    try {
+      _db = initializeFirestore(_app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+      });
+      console.log('✅ Firestore مفعّل مع IndexedDB cache');
+    } catch (e1) {
+      try {
+        _db = getFirestore(_app);
+        console.log('✅ Firestore مفعّل (getFirestore fallback)');
+      } catch (e2) {
+        console.warn('Firestore init failed:', e1.message, e2?.message);
+        _db = null;
+      }
+    }
+  }
+})();
 
-// تشغيل التهيئة تلقائياً عند الاستيراد
-initFirebase();
+// Named exports (backward compatible)
+export const app = _app;
+export const db = _db;
+export const analytics = null;
 
+// Getter functions (always up to date - useful after dynamic re-init)
+export const getDb = () => _db;
+export const getFirebaseApp = () => _app;
+
+export const initFirebase = () => ({ app: _app, db: _db });
+
+// Re-export firebase/firestore helpers
 export {
-  app,
-  db,
-  analytics,
   collection,
   doc,
   getDoc,
