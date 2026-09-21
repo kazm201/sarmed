@@ -602,7 +602,7 @@ export const SettingsPage = ({ setActivePage }) => {
           <button
             type="button"
             onClick={() => setShowDownloadClearConfirm(true)}
-            disabled={isDownloading || customers.length === 0}
+            disabled={isDownloading}
             className="w-full py-2.5 px-4 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
           >
             <FileDown className={`w-4 h-4 ${isDownloading ? 'animate-pulse' : ''}`} />

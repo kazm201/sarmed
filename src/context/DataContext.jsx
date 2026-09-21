@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   getDb,
   collection,
@@ -18,18 +18,21 @@ import { notificationService } from '../services/notificationService';
 const db = getDb();
 
 // 🔤 Smart name normalization for duplicate detection
-const normalizeName = (name) => {
+export const normalizeCustomerName = (name) => {
   if (!name) return '';
   return name
     .trim()
-    .replace(/\s+/g, ' ')  // collapse multiple spaces
+    .replace(/\s+/g, ' ')            // collapse multiple spaces
     .toLowerCase()
-    .replace(/[ًٌٍَُِّْ]/g, '') // remove Arabic diacritics (tashkeel)
-    .replace(/[أإآ]/g, 'ا')  // normalize alef variants
-    .replace(/ة/g, 'ه')     // normalize ta marbuta
-    .replace(/ى/g, 'ي');    // normalize alef maqsura
+    .replace(/[ًٌٍَُِّْـ]/g, '')     // remove Arabic diacritics (tashkeel) & tatweel
+    .replace(/[أإآٱ]/g, 'ا')         // normalize alef variants
+    .replace(/ة/g, 'ه')              // normalize ta marbuta
+    .replace(/[ىي]/g, 'ي')          // normalize alef maqsura and ya
+    .replace(/ؤ/g, 'و')              // normalize waw with hamza
+    .replace(/ئ/g, 'ي');             // normalize ya with hamza
 };
 
+const normalizeName = normalizeCustomerName;
 
 const DataContext = createContext();
 
@@ -37,17 +40,30 @@ const DataContext = createContext();
 const getCustomersKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_customers_db`;
 const getTransactionsKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_transactions_db`;
 const getNotificationsKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_notifications_db`;
+const getTombstonesKey = (sId) => `sarmed_${sId || DEFAULT_STORE_ID}_tombstones`;
 
-const loadInitialScopedData = (key, legacyKey) => {
+const loadInitialScopedData = (key, legacyKey, storeId) => {
   try {
+    let tombstones = [];
+    if (storeId) {
+      try {
+        tombstones = JSON.parse(localStorage.getItem(getTombstonesKey(storeId)) || '[]');
+      } catch (e) {}
+    }
+    const tombSet = new Set(tombstones);
+
     const saved = localStorage.getItem(key);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.filter(item => !tombSet.has(item.id) && !tombSet.has(item.customerId)) : parsed;
+    }
     if (legacyKey) {
       const legacy = localStorage.getItem(legacyKey);
       if (legacy) {
         const parsed = JSON.parse(legacy);
-        localStorage.setItem(key, legacy);
-        return parsed;
+        const filtered = Array.isArray(parsed) ? parsed.filter(item => !tombSet.has(item.id) && !tombSet.has(item.customerId)) : parsed;
+        localStorage.setItem(key, JSON.stringify(filtered));
+        return filtered;
       }
     }
   } catch {}
@@ -58,16 +74,18 @@ export const DataProvider = ({ children }) => {
   const { currentUser, isManager, settings, storeId: authStoreId, updateSettings, setStoreId } = useAuth();
   const activeStoreId = authStoreId || currentUser?.storeId || getSavedStoreId() || DEFAULT_STORE_ID;
 
+  const isWipingRef = useRef(false);
+
   const [customers, setCustomers] = useState(() =>
-    loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db')
+    loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db', activeStoreId)
   );
 
   const [transactions, setTransactions] = useState(() =>
-    loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db')
+    loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db', activeStoreId)
   );
 
   const [notifications, setNotifications] = useState(() =>
-    loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db')
+    loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db', activeStoreId)
   );
 
   const [isSyncing, setIsSyncing] = useState(false);
@@ -92,9 +110,9 @@ export const DataProvider = ({ children }) => {
   // Reload local state whenever activeStoreId changes
   useEffect(() => {
     setIsLoadingCloudData(true); // Reset loading on store switch
-    setCustomers(loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db'));
-    setTransactions(loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db'));
-    setNotifications(loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db'));
+    setCustomers(loadInitialScopedData(getCustomersKey(activeStoreId), 'sarmed_customers_db', activeStoreId));
+    setTransactions(loadInitialScopedData(getTransactionsKey(activeStoreId), 'sarmed_transactions_db', activeStoreId));
+    setNotifications(loadInitialScopedData(getNotificationsKey(activeStoreId), 'sarmed_notifications_db', activeStoreId));
   }, [activeStoreId]);
 
   // Monitor Network Online/Offline Status
@@ -119,9 +137,9 @@ export const DataProvider = ({ children }) => {
 
   // Save to persistent storage whenever state changes
   useEffect(() => {
+    if (isWipingRef.current) return;
     try {
       localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(customers));
-      // Keep legacy key updated if default store
       if (activeStoreId === DEFAULT_STORE_ID) {
         localStorage.setItem('sarmed_customers_db', JSON.stringify(customers));
       }
@@ -131,6 +149,7 @@ export const DataProvider = ({ children }) => {
   }, [customers, activeStoreId]);
 
   useEffect(() => {
+    if (isWipingRef.current) return;
     try {
       localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(transactions));
       if (activeStoreId === DEFAULT_STORE_ID) {
@@ -142,6 +161,7 @@ export const DataProvider = ({ children }) => {
   }, [transactions, activeStoreId]);
 
   useEffect(() => {
+    if (isWipingRef.current) return;
     try {
       localStorage.setItem(getNotificationsKey(activeStoreId), JSON.stringify(notifications));
     } catch (e) {
@@ -160,6 +180,7 @@ export const DataProvider = ({ children }) => {
     let unsubCustomers = () => {};
     let unsubTransactions = () => {};
     let unsubNotifications = () => {};
+    let unsubTombstones = () => {};
     let customersLoaded = false;
     let transactionsLoaded = false;
 
@@ -177,7 +198,28 @@ export const DataProvider = ({ children }) => {
     try {
       setIsSyncing(true);
 
-      // 1. Listen to store-scoped Customers Collection
+      // 1. Listen to store-scoped Tombstones Collection (for realtime deletion sync across devices)
+      const storeTombCollection = collection(db, 'stores', activeStoreId, 'tombstones');
+      unsubTombstones = onSnapshot(
+        storeTombCollection,
+        (snapshot) => {
+          if (isWipingRef.current || snapshot.empty) return;
+          const remoteTombIds = snapshot.docs.map((d) => d.id);
+          try {
+            const localTombs = JSON.parse(localStorage.getItem(getTombstonesKey(activeStoreId)) || '[]');
+            const merged = Array.from(new Set([...localTombs, ...remoteTombIds]));
+            localStorage.setItem(getTombstonesKey(activeStoreId), JSON.stringify(merged));
+            const mergedSet = new Set(merged);
+
+            // Immediately purge any deleted customers or transactions from state
+            setCustomers((prev) => prev.filter((c) => !mergedSet.has(c.id)));
+            setTransactions((prev) => prev.filter((t) => !mergedSet.has(t.customerId) && !mergedSet.has(t.id)));
+          } catch (e) {}
+        },
+        (err) => {}
+      );
+
+      // 2. Listen to store-scoped Customers Collection
       const storeCustCollection = collection(db, 'stores', activeStoreId, 'customers');
       unsubCustomers = onSnapshot(
         storeCustCollection,
@@ -187,36 +229,28 @@ export const DataProvider = ({ children }) => {
           setLastCloudSyncTime(new Date().toLocaleTimeString('ar-IQ'));
           setIsSyncing(false);
 
-          if (!snapshot.empty) {
-            // ✅ Cloud has data — use it directly on this device
-            const cloudList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-            cloudList.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+          if (isWipingRef.current) return;
 
-            // Also push any local-only customers that are missing in cloud
-            try {
-              const localSaved = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
-              const missingOnRemote = localSaved.filter((lc) => !cloudList.some((rc) => rc.id === lc.id));
-              if (missingOnRemote.length > 0) {
-                missingOnRemote.forEach((c) => {
-                  void setDoc(doc(db, 'stores', activeStoreId, 'customers', c.id), c).catch(() => {});
-                });
-              }
-            } catch (e) {}
+          let tombstones = [];
+          try {
+            tombstones = JSON.parse(localStorage.getItem(getTombstonesKey(activeStoreId)) || '[]');
+          } catch (e) {}
+          const tombSet = new Set(tombstones);
 
-            // ✅ Set state from cloud data
-            setCustomers(cloudList);
+          const cloudList = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((c) => !tombSet.has(c.id)); // 🚫 NEVER restore tombstoned/deleted customers!
+
+          cloudList.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+
+          // ✅ Set state from cloud data. DO NOT automatically push local data to cloud here!
+          setCustomers(cloudList);
+          try {
             localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(cloudList));
-          } else {
-            // Cloud is empty for this store ID -> Push local data to cloud if any
-            try {
-              const localSaved = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
-              if (localSaved.length > 0) {
-                localSaved.forEach((c) => {
-                  void setDoc(doc(db, 'stores', activeStoreId, 'customers', c.id), c).catch(() => {});
-                });
-              }
-            } catch (e) {}
-          }
+            if (activeStoreId === DEFAULT_STORE_ID) {
+              localStorage.setItem('sarmed_customers_db', JSON.stringify(cloudList));
+            }
+          } catch (e) {}
 
           customersLoaded = true;
           checkAllLoaded();
@@ -242,39 +276,32 @@ export const DataProvider = ({ children }) => {
         }
       );
 
-      // 2. Listen to store-scoped Transactions Collection
+      // 3. Listen to store-scoped Transactions Collection
       const storeTransCollection = collection(db, 'stores', activeStoreId, 'transactions');
       unsubTransactions = onSnapshot(
         storeTransCollection,
         (snapshot) => {
-          if (!snapshot.empty) {
-            const cloudList = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-            cloudList.sort((a, b) => new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0));
+          if (isWipingRef.current) return;
 
-            // Push any local-only transactions not in cloud
-            try {
-              const localSaved = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
-              const missingOnRemote = localSaved.filter((lt) => !cloudList.some((rt) => rt.id === lt.id));
-              if (missingOnRemote.length > 0) {
-                missingOnRemote.forEach((t) => {
-                  void setDoc(doc(db, 'stores', activeStoreId, 'transactions', t.id), t).catch(() => {});
-                });
-              }
-            } catch (e) {}
+          let tombstones = [];
+          try {
+            tombstones = JSON.parse(localStorage.getItem(getTombstonesKey(activeStoreId)) || '[]');
+          } catch (e) {}
+          const tombSet = new Set(tombstones);
 
-            // ✅ Set state from cloud data
-            setTransactions(cloudList);
+          const cloudList = snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((t) => !tombSet.has(t.id) && !tombSet.has(t.customerId)); // filter out deleted customer transactions
+
+          cloudList.sort((a, b) => new Date(b.createdAt || b.date || 0) - new Date(a.createdAt || a.date || 0));
+
+          setTransactions(cloudList);
+          try {
             localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(cloudList));
-          } else {
-            try {
-              const localSaved = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
-              if (localSaved.length > 0) {
-                localSaved.forEach((t) => {
-                  void setDoc(doc(db, 'stores', activeStoreId, 'transactions', t.id), t).catch(() => {});
-                });
-              }
-            } catch (e) {}
-          }
+            if (activeStoreId === DEFAULT_STORE_ID) {
+              localStorage.setItem('sarmed_transactions_db', JSON.stringify(cloudList));
+            }
+          } catch (e) {}
 
           transactionsLoaded = true;
           checkAllLoaded();
@@ -286,11 +313,12 @@ export const DataProvider = ({ children }) => {
         }
       );
 
-      // 3. Listen to store-scoped Notifications Collection
+      // 4. Listen to store-scoped Notifications Collection
       const storeNotifCollection = collection(db, 'stores', activeStoreId, 'notifications');
       unsubNotifications = onSnapshot(
         storeNotifCollection,
         (snapshot) => {
+          if (isWipingRef.current) return;
           if (!snapshot.empty) {
             const list = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
             list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
@@ -310,6 +338,7 @@ export const DataProvider = ({ children }) => {
       unsubCustomers();
       unsubTransactions();
       unsubNotifications();
+      unsubTombstones();
     };
   }, [activeStoreId]);
 
@@ -404,39 +433,82 @@ export const DataProvider = ({ children }) => {
     }
   };
 
-  // Delete Customer
+  // Delete Customer — Permanent deletion across all devices & Firebase
   const deleteCustomer = async (id) => {
-    // Get related transactions before removing from state
-    const relatedTxIds = transactions.filter(t => t.customerId === id).map(t => t.id);
-    const relatedNotifIds = notifications.filter(n => n.meta?.customerId === id).map(n => n.id);
+    if (!id) return { success: false };
 
+    // 1. Record in local tombstones immediately
+    const tombKey = getTombstonesKey(activeStoreId);
+    try {
+      const tombstones = JSON.parse(localStorage.getItem(tombKey) || '[]');
+      if (!tombstones.includes(id)) {
+        tombstones.push(id);
+        localStorage.setItem(tombKey, JSON.stringify(tombstones));
+      }
+    } catch (e) {}
+
+    // 2. Identify related transactions and notifications
+    const relatedTxIds = transactions.filter((t) => t.customerId === id).map((t) => t.id);
+    const relatedNotifIds = notifications.filter((n) => n.meta?.customerId === id).map((n) => n.id);
+
+    // 3. Update React state immediately
     setCustomers((prev) => prev.filter((c) => c.id !== id));
     setTransactions((prev) => prev.filter((t) => t.customerId !== id));
     setNotifications((prev) => prev.filter((n) => n.meta?.customerId !== id));
 
+    // 4. Update localStorage synchronously so there is no race condition
+    try {
+      const savedCusts = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
+      const filteredCusts = savedCusts.filter((c) => c.id !== id);
+      localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(filteredCusts));
+      if (activeStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_customers_db', JSON.stringify(filteredCusts));
+      }
+
+      const savedTxs = JSON.parse(localStorage.getItem(getTransactionsKey(activeStoreId)) || '[]');
+      const filteredTxs = savedTxs.filter((t) => t.customerId !== id);
+      localStorage.setItem(getTransactionsKey(activeStoreId), JSON.stringify(filteredTxs));
+      if (activeStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_transactions_db', JSON.stringify(filteredTxs));
+      }
+    } catch (e) {}
+
+    // 5. Delete permanently from Firebase Firestore and register tombstone
     if (db) {
       try {
-        // Delete customer from all collections
-        void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', id)).catch(() => {});
-        void deleteDoc(doc(db, 'customers', id)).catch(() => {});
+        // Register tombstone in Firestore so ALL other devices see and enforce deletion
+        await setDoc(doc(db, 'stores', activeStoreId, 'tombstones', id), {
+          id,
+          type: 'customer',
+          deletedAt: new Date().toISOString()
+        }).catch(() => {});
 
-        // Delete all related transactions from Firebase
+        // Delete customer documents
+        await deleteDoc(doc(db, 'stores', activeStoreId, 'customers', id)).catch(() => {});
+        await deleteDoc(doc(db, 'customers', id)).catch(() => {});
+
+        // Delete all customer transactions from Firestore
         for (const txId of relatedTxIds) {
-          void deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', txId)).catch(() => {});
-          void deleteDoc(doc(db, 'transactions', txId)).catch(() => {});
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', txId)).catch(() => {});
+          await deleteDoc(doc(db, 'transactions', txId)).catch(() => {});
         }
 
-        // Delete related notifications from Firebase
+        // Delete customer notifications from Firestore
         for (const notifId of relatedNotifIds) {
-          void deleteDoc(doc(db, 'stores', activeStoreId, 'notifications', notifId)).catch(() => {});
-          void deleteDoc(doc(db, 'notifications', notifId)).catch(() => {});
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'notifications', notifId)).catch(() => {});
+          await deleteDoc(doc(db, 'notifications', notifId)).catch(() => {});
         }
       } catch (err) {
-        console.warn('Firestore delete customer notice', err);
+        console.warn('Firestore delete error:', err);
       }
     }
 
-    return { deletedTransactions: relatedTxIds.length, deletedNotifications: relatedNotifIds.length };
+    notificationService.playChime('success');
+    return {
+      success: true,
+      deletedTransactions: relatedTxIds.length,
+      deletedNotifications: relatedNotifIds.length
+    };
   };
 
   // Dispatch an In-app & System Notification
@@ -850,10 +922,11 @@ export const DataProvider = ({ children }) => {
     }
   };
 
-  // ☁️ Smart Cloud Sync — only uploads NEW records not yet in Firebase
+  // ☁️ Smart Cloud Sync — only uploads NEW records without duplicating existing ones
   const smartSyncToCloud = async () => {
     if (!db) throw new Error('خدمة Firebase غير مهيأة');
     setIsSyncing(true);
+
     const report = {
       newCustomers: 0,
       skippedCustomers: 0,
@@ -862,50 +935,80 @@ export const DataProvider = ({ children }) => {
       newNotifications: 0,
       skippedNotifications: 0
     };
+
     try {
-      // 1. Always sync settings
+      // 1. Sync store settings
       if (settings) {
         await setDoc(doc(db, 'stores', activeStoreId, 'config', 'settings'), settings, { merge: true });
       }
 
-      // 2. Get existing customer IDs from Firebase
+      // 2. Fetch existing customers from Firestore
       const cloudCustSnap = await getDocs(collection(db, 'stores', activeStoreId, 'customers'));
-      const cloudCustIds = new Set(cloudCustSnap.docs.map(d => d.id));
+      const cloudCustMapById = new Map();
+      const cloudCustMapByName = new Map();
 
-      // 3. Upload only NEW customers
+      cloudCustSnap.docs.forEach((d) => {
+        const data = d.data();
+        cloudCustMapById.set(d.id, data);
+        if (data.name) {
+          cloudCustMapByName.set(normalizeName(data.name), { id: d.id, ...data });
+        }
+      });
+
+      // Get tombstones so we NEVER upload deleted customers
+      let tombstones = [];
+      try {
+        tombstones = JSON.parse(localStorage.getItem(getTombstonesKey(activeStoreId)) || '[]');
+      } catch (e) {}
+      const tombSet = new Set(tombstones);
+
+      // 3. Upload only NEW customers (check by ID AND by normalized name!)
       for (const cust of customers) {
-        if (!cloudCustIds.has(cust.id)) {
+        if (tombSet.has(cust.id)) continue; // Never upload deleted
+
+        const normalizedCustName = normalizeName(cust.name);
+        const existingByName = cloudCustMapByName.get(normalizedCustName);
+        const existsById = cloudCustMapById.has(cust.id);
+
+        if (!existsById && !existingByName) {
+          // Truly new customer!
           await setDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), cust);
+          cloudCustMapById.set(cust.id, cust);
+          cloudCustMapByName.set(normalizedCustName, cust);
           report.newCustomers++;
         } else {
-          // Update existing with merge to sync any field changes
-          await setDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), cust, { merge: true });
+          // Already exists in cloud! Do not duplicate! Just merge fields if needed
+          const targetId = existsById ? cust.id : existingByName.id;
+          await setDoc(doc(db, 'stores', activeStoreId, 'customers', targetId), cust, { merge: true });
           report.skippedCustomers++;
         }
       }
 
-      // 4. Get existing transaction IDs from Firebase
+      // 4. Fetch existing transactions from Firestore
       const cloudTxSnap = await getDocs(collection(db, 'stores', activeStoreId, 'transactions'));
-      const cloudTxIds = new Set(cloudTxSnap.docs.map(d => d.id));
+      const cloudTxIds = new Set(cloudTxSnap.docs.map((d) => d.id));
 
       // 5. Upload only NEW transactions
       for (const tx of transactions) {
+        if (tombSet.has(tx.id) || tombSet.has(tx.customerId)) continue;
+
         if (!cloudTxIds.has(tx.id)) {
           await setDoc(doc(db, 'stores', activeStoreId, 'transactions', tx.id), tx);
+          cloudTxIds.add(tx.id);
           report.newTransactions++;
         } else {
           report.skippedTransactions++;
         }
       }
 
-      // 6. Get existing notification IDs from Firebase
+      // 6. Fetch and upload only new notifications
       const cloudNotifSnap = await getDocs(collection(db, 'stores', activeStoreId, 'notifications'));
-      const cloudNotifIds = new Set(cloudNotifSnap.docs.map(d => d.id));
+      const cloudNotifIds = new Set(cloudNotifSnap.docs.map((d) => d.id));
 
-      // 7. Upload only NEW notifications
       for (const notif of notifications) {
         if (!cloudNotifIds.has(notif.id)) {
           await setDoc(doc(db, 'stores', activeStoreId, 'notifications', notif.id), notif);
+          cloudNotifIds.add(notif.id);
           report.newNotifications++;
         } else {
           report.skippedNotifications++;
@@ -942,24 +1045,26 @@ export const DataProvider = ({ children }) => {
 
   // 🔍 Scan and Remove Duplicate Customers
   const scanAndRemoveDuplicates = async () => {
-    const nameMap = new Map(); // normalized name -> first customer
+    const nameMap = new Map(); // normalized name -> first/original customer
     const duplicates = [];
     const mergedTransactions = [];
 
-    // Sort by createdAt ascending so oldest comes first
+    // Sort by createdAt ascending so oldest customer is original
     const sortedCustomers = [...customers].sort(
       (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
     );
 
     for (const cust of sortedCustomers) {
       const normalized = normalizeName(cust.name);
+      if (!normalized) continue;
+
       if (nameMap.has(normalized)) {
-        // This is a duplicate — keep the original, merge transactions
+        // Duplicate found!
         const original = nameMap.get(normalized);
         duplicates.push({ duplicate: cust, originalId: original.id, originalName: original.name });
 
-        // Move transactions from duplicate to original
-        const dupTxs = transactions.filter(t => t.customerId === cust.id);
+        // Move transactions of duplicate to original
+        const dupTxs = transactions.filter((t) => t.customerId === cust.id);
         for (const tx of dupTxs) {
           mergedTransactions.push({
             ...tx,
@@ -982,44 +1087,55 @@ export const DataProvider = ({ children }) => {
       };
     }
 
-    const dupIds = new Set(duplicates.map(d => d.duplicate.id));
+    const dupIds = new Set(duplicates.map((d) => d.duplicate.id));
 
-    // Update transactions: move from duplicate to original
-    setTransactions(prev => {
-      const updated = prev.map(tx => {
-        const merged = mergedTransactions.find(mt => mt.id === tx.id);
+    // 1. Add duplicate IDs to tombstones immediately so they can NEVER be resurrected
+    const tombKey = getTombstonesKey(activeStoreId);
+    try {
+      const existingTombs = JSON.parse(localStorage.getItem(tombKey) || '[]');
+      const updatedTombs = Array.from(new Set([...existingTombs, ...Array.from(dupIds)]));
+      localStorage.setItem(tombKey, JSON.stringify(updatedTombs));
+    } catch (e) {}
+
+    // 2. Update local state
+    setTransactions((prev) =>
+      prev.map((tx) => {
+        const merged = mergedTransactions.find((mt) => mt.id === tx.id);
         return merged || tx;
-      });
-      return updated;
-    });
+      })
+    );
+    setCustomers((prev) => prev.filter((c) => !dupIds.has(c.id)));
 
-    // Remove duplicate customers from state
-    setCustomers(prev => prev.filter(c => !dupIds.has(c.id)));
-
-    // Recalculate debt for originals
-    const originals = new Map();
-    duplicates.forEach(d => {
-      if (!originals.has(d.originalId)) {
-        originals.set(d.originalId, nameMap.get(normalizeName(d.originalName)));
+    // 3. Update localStorage synchronously
+    try {
+      const savedCusts = JSON.parse(localStorage.getItem(getCustomersKey(activeStoreId)) || '[]');
+      const filtered = savedCusts.filter((c) => !dupIds.has(c.id));
+      localStorage.setItem(getCustomersKey(activeStoreId), JSON.stringify(filtered));
+      if (activeStoreId === DEFAULT_STORE_ID) {
+        localStorage.setItem('sarmed_customers_db', JSON.stringify(filtered));
       }
-    });
+    } catch (e) {}
 
-    // Delete from Firebase
+    // 4. Process Firestore: Delete duplicates + add tombstones + update merged transactions
     if (db) {
       for (const dup of duplicates) {
         try {
-          void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', dup.duplicate.id)).catch(() => {});
-          void deleteDoc(doc(db, 'customers', dup.duplicate.id)).catch(() => {});
+          // Register tombstone in Firestore
+          await setDoc(doc(db, 'stores', activeStoreId, 'tombstones', dup.duplicate.id), {
+            id: dup.duplicate.id,
+            name: dup.duplicate.name,
+            mergedInto: dup.originalId,
+            type: 'duplicate_customer',
+            deletedAt: new Date().toISOString()
+          });
 
-          // Delete duplicate's transactions from Firebase
-          const dupTxs = transactions.filter(t => t.customerId === dup.duplicate.id);
-          for (const tx of dupTxs) {
-            void deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', tx.id)).catch(() => {});
-          }
+          // Delete duplicate customer doc
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'customers', dup.duplicate.id)).catch(() => {});
+          await deleteDoc(doc(db, 'customers', dup.duplicate.id)).catch(() => {});
         } catch (e) {}
       }
 
-      // Re-upload merged transactions with correct customerId
+      // Update merged transactions in Firestore
       for (const mt of mergedTransactions) {
         try {
           await setDoc(doc(db, 'stores', activeStoreId, 'transactions', mt.id), mt, { merge: true });
@@ -1027,13 +1143,16 @@ export const DataProvider = ({ children }) => {
       }
     }
 
+    // 5. Recalculate accurate balances
+    void resetStatisticsOnly().catch(() => {});
+
     notificationService.playChime('success');
 
     return {
       duplicatesFound: duplicates.length,
       duplicatesRemoved: duplicates.length,
       transactionsMerged: mergedTransactions.length,
-      details: duplicates.map(d => ({
+      details: duplicates.map((d) => ({
         removedName: d.duplicate.name,
         removedId: d.duplicate.id,
         mergedInto: d.originalName,
@@ -1042,13 +1161,13 @@ export const DataProvider = ({ children }) => {
     };
   };
 
-  // 📥 Download all data then clear database
+  // 📥 Download all data then clear database (Mobile + Desktop compatible)
   const downloadAndClearAll = async () => {
     // 1. Prepare full backup data
     const backupData = {
       version: '2.0',
       exportDate: new Date().toISOString(),
-      storeName: settings.storeName,
+      storeName: settings.storeName || 'متجر سرمد',
       storeId: activeStoreId,
       storeSettings: settings,
       customers,
@@ -1058,42 +1177,99 @@ export const DataProvider = ({ children }) => {
       totalTransactions: transactions.length
     };
 
-    // 2. Download the file
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `full_backup_${activeStoreId}_${new Date().toISOString().split('T')[0]}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-
-    // 3. Wait a moment to ensure download started
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
-    // 4. Clear all local data
     const custCount = customers.length;
     const txCount = transactions.length;
+    const jsonString = JSON.stringify(backupData, null, 2);
+    const fileName = `sarmed_backup_${activeStoreId}_${new Date().toISOString().split('T')[0]}.json`;
+
+    // 2. Download the file using Blob (Mobile + Desktop compatible)
+    try {
+      const blob = new Blob([jsonString], { type: 'application/json' });
+
+      // Try Web Share API first (on mobile phones this allows saving to files / sharing directly)
+      let shared = false;
+      if (typeof navigator !== 'undefined' && navigator.canShare) {
+        try {
+          const file = new File([blob], fileName, { type: 'application/json' });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              title: 'نسخة احتياطية لقاعدة البيانات',
+              text: 'نسخة احتياطية لقاعدة بيانات متجر سرمد'
+            });
+            shared = true;
+          }
+        } catch (shareErr) {
+          // User aborted share or share failed -> continue to direct download
+        }
+      }
+
+      if (!shared) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (e) {}
+        }, 3000);
+      }
+    } catch (downloadErr) {
+      console.warn('Backup download warning:', downloadErr);
+    }
+
+    // 3. Pause briefly to ensure download has started
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    // 4. Set wiping flag so listeners don't re-upload
+    isWipingRef.current = true;
+
+    // 5. Clear all local data immediately
     await resetAllData();
 
-    // 5. Clear from Firebase too
+    // Clear tombstones key too
+    try {
+      localStorage.removeItem(getTombstonesKey(activeStoreId));
+    } catch (e) {}
+
+    // 6. Wipe everything from Firebase Firestore
     if (db) {
       try {
         const custSnap = await getDocs(collection(db, 'stores', activeStoreId, 'customers'));
         for (const d of custSnap.docs) {
-          void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', d.id)).catch(() => {});
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'customers', d.id)).catch(() => {});
+          await deleteDoc(doc(db, 'customers', d.id)).catch(() => {});
         }
+
         const txSnap = await getDocs(collection(db, 'stores', activeStoreId, 'transactions'));
         for (const d of txSnap.docs) {
-          void deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', d.id)).catch(() => {});
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', d.id)).catch(() => {});
+          await deleteDoc(doc(db, 'transactions', d.id)).catch(() => {});
         }
+
         const notifSnap = await getDocs(collection(db, 'stores', activeStoreId, 'notifications'));
         for (const d of notifSnap.docs) {
-          void deleteDoc(doc(db, 'stores', activeStoreId, 'notifications', d.id)).catch(() => {});
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'notifications', d.id)).catch(() => {});
+          await deleteDoc(doc(db, 'notifications', d.id)).catch(() => {});
+        }
+
+        const tombSnap = await getDocs(collection(db, 'stores', activeStoreId, 'tombstones'));
+        for (const d of tombSnap.docs) {
+          await deleteDoc(doc(db, 'stores', activeStoreId, 'tombstones', d.id)).catch(() => {});
         }
       } catch (e) {
         console.warn('Firebase clear error:', e);
       }
     }
+
+    // Release wiping flag after 2.5 seconds
+    setTimeout(() => {
+      isWipingRef.current = false;
+    }, 2500);
 
     notificationService.playChime('success');
     return { customersCleared: custCount, transactionsCleared: txCount };

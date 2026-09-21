@@ -32,7 +32,8 @@ export const CustomersPage = ({ setActivePage }) => {
     transactions,
     addCustomer,
     updateCustomer,
-    deleteCustomer
+    deleteCustomer,
+    scanAndRemoveDuplicates
   } = useData();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,6 +48,9 @@ export const CustomersPage = ({ setActivePage }) => {
   const [deletingCustomerId, setDeletingCustomerId] = useState(null);
   const [formError, setFormError] = useState('');
   const [deleteResult, setDeleteResult] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isScanningDuplicates, setIsScanningDuplicates] = useState(false);
+  const [dupScanResult, setDupScanResult] = useState(null);
 
   // Form State for Add / Edit
   const [formData, setFormData] = useState({
@@ -139,6 +143,20 @@ export const CustomersPage = ({ setActivePage }) => {
     window.open(url, '_blank');
   };
 
+  const handleScanDuplicates = async () => {
+    setIsScanningDuplicates(true);
+    setDupScanResult(null);
+    try {
+      const res = await scanAndRemoveDuplicates();
+      setDupScanResult(res);
+      setTimeout(() => setDupScanResult(null), 10000);
+    } catch (e) {
+      setDupScanResult({ error: e.message || 'حدث خطأ أثناء فحص المكررات' });
+    } finally {
+      setIsScanningDuplicates(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {/* Top Header & Actions */}
@@ -156,6 +174,15 @@ export const CustomersPage = ({ setActivePage }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={handleScanDuplicates}
+            disabled={isScanningDuplicates}
+            className="flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-2xl bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/40 font-bold text-xs sm:text-sm shadow-lg transition-all active:scale-95 disabled:opacity-50"
+          >
+            <Search className={`w-4 h-4 ${isScanningDuplicates ? 'animate-spin' : ''}`} />
+            <span>{isScanningDuplicates ? 'جاري الفحص...' : 'فحص وحذف المكررات'}</span>
+          </button>
+
           <button
             onClick={() => setShowPdfModal(true)}
             className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold text-xs sm:text-sm shadow-lg shadow-rose-950/60 transition-all active:scale-95"
@@ -176,6 +203,28 @@ export const CustomersPage = ({ setActivePage }) => {
           </button>
         </div>
       </div>
+
+      {/* Duplicate Scan Feedback Banner */}
+      {dupScanResult && !dupScanResult.error && (
+        <div className={`p-4 rounded-2xl border animate-in fade-in ${
+          dupScanResult.duplicatesFound > 0 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' : 'bg-slate-900 border-slate-700 text-slate-300'
+        }`}>
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-xs sm:text-sm">
+              {dupScanResult.duplicatesFound > 0
+                ? `✅ تم العثور على ${dupScanResult.duplicatesFound} اسم مكرر وحذفهم ودمج حركاتهم بنجاح!`
+                : '✅ قاعدة البيانات نظيفة تماماً! لا توجد أي أسماء مكررة.'}
+            </span>
+            <button onClick={() => setDupScanResult(null)} className="text-xs text-slate-400 hover:text-white">✕</button>
+          </div>
+        </div>
+      )}
+
+      {dupScanResult?.error && (
+        <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-300 font-bold text-xs">
+          ❌ {dupScanResult.error}
+        </div>
+      )}
 
       {/* Filters, Search & Sorters Bar */}
       <div className="glass-panel rounded-3xl p-4 border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -563,23 +612,41 @@ export const CustomersPage = ({ setActivePage }) => {
 
             <div className="mt-5 flex items-center justify-center gap-3">
               <button
+                type="button"
+                disabled={isDeleting}
                 onClick={() => { setDeletingCustomerId(null); setDeleteResult(null); }}
                 className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
               >
                 إلغاء
               </button>
               <button
+                type="button"
+                disabled={isDeleting}
                 onClick={async () => {
-                  const result = await deleteCustomer(deletingCustomerId);
-                  setDeleteResult(result);
-                  setTimeout(() => {
-                    setDeletingCustomerId(null);
-                    setDeleteResult(null);
-                  }, 2500);
+                  setIsDeleting(true);
+                  try {
+                    const result = await deleteCustomer(deletingCustomerId);
+                    setDeleteResult(result);
+                    setTimeout(() => {
+                      setDeletingCustomerId(null);
+                      setDeleteResult(null);
+                    }, 1800);
+                  } catch (err) {
+                    alert('حدث خطأ أثناء الحذف: ' + err.message);
+                  } finally {
+                    setIsDeleting(false);
+                  }
                 }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg"
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold shadow-lg flex items-center gap-1.5"
               >
-                تأكيد الحذف من الكل
+                {isDeleting ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>جاري الحذف...</span>
+                  </>
+                ) : (
+                  <span>تأكيد الحذف من الكل</span>
+                )}
               </button>
             </div>
           </div>
