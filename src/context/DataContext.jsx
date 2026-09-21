@@ -17,6 +17,19 @@ import { notificationService } from '../services/notificationService';
 // ✅ Always get the live Firestore instance (not a stale null from module init)
 const db = getDb();
 
+// 🔤 Smart name normalization for duplicate detection
+const normalizeName = (name) => {
+  if (!name) return '';
+  return name
+    .trim()
+    .replace(/\s+/g, ' ')  // collapse multiple spaces
+    .toLowerCase()
+    .replace(/[ًٌٍَُِّْ]/g, '') // remove Arabic diacritics (tashkeel)
+    .replace(/[أإآ]/g, 'ا')  // normalize alef variants
+    .replace(/ة/g, 'ه')     // normalize ta marbuta
+    .replace(/ى/g, 'ي');    // normalize alef maqsura
+};
+
 
 const DataContext = createContext();
 
@@ -306,6 +319,14 @@ export const DataProvider = ({ children }) => {
   const addCustomer = async ({ name, phone = '', address = '', notes = '', initialDebt = 0 }) => {
     if (!isManager) throw new Error('إضافة زبون جديد متاحة لصاحب السوبرماركت فقط');
     if (!name?.trim()) throw new Error('يرجى إدخال اسم الزبون');
+
+    // 🚫 Smart duplicate name detection
+    const normalizedNewName = normalizeName(name);
+    const existingDuplicate = customers.find(c => normalizeName(c.name) === normalizedNewName);
+    if (existingDuplicate) {
+      throw new Error(`يوجد زبون مسجل بنفس الاسم بالفعل: "${existingDuplicate.name}"`);
+    }
+
     const parsedInitialDebt = parseFloat(initialDebt) || 0;
     const customerId = 'cust_' + Date.now();
     const newCustomer = {
@@ -385,17 +406,37 @@ export const DataProvider = ({ children }) => {
 
   // Delete Customer
   const deleteCustomer = async (id) => {
+    // Get related transactions before removing from state
+    const relatedTxIds = transactions.filter(t => t.customerId === id).map(t => t.id);
+    const relatedNotifIds = notifications.filter(n => n.meta?.customerId === id).map(n => n.id);
+
     setCustomers((prev) => prev.filter((c) => c.id !== id));
     setTransactions((prev) => prev.filter((t) => t.customerId !== id));
+    setNotifications((prev) => prev.filter((n) => n.meta?.customerId !== id));
 
     if (db) {
       try {
+        // Delete customer from all collections
         void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', id)).catch(() => {});
         void deleteDoc(doc(db, 'customers', id)).catch(() => {});
+
+        // Delete all related transactions from Firebase
+        for (const txId of relatedTxIds) {
+          void deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', txId)).catch(() => {});
+          void deleteDoc(doc(db, 'transactions', txId)).catch(() => {});
+        }
+
+        // Delete related notifications from Firebase
+        for (const notifId of relatedNotifIds) {
+          void deleteDoc(doc(db, 'stores', activeStoreId, 'notifications', notifId)).catch(() => {});
+          void deleteDoc(doc(db, 'notifications', notifId)).catch(() => {});
+        }
       } catch (err) {
         console.warn('Firestore delete customer notice', err);
       }
     }
+
+    return { deletedTransactions: relatedTxIds.length, deletedNotifications: relatedNotifIds.length };
   };
 
   // Dispatch an In-app & System Notification
@@ -748,7 +789,7 @@ export const DataProvider = ({ children }) => {
     localStorage.removeItem(STATS_RESET_KEY);
   };
 
-  // Full Cloud Push for Active Store
+  // Full Cloud Push for Active Store (legacy - still used by auto-sync)
   const syncAllDataToCloud = async () => {
     if (!db) throw new Error('خدمة Firebase غير مهيأة');
     setIsSyncing(true);
@@ -807,6 +848,255 @@ export const DataProvider = ({ children }) => {
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  // ☁️ Smart Cloud Sync — only uploads NEW records not yet in Firebase
+  const smartSyncToCloud = async () => {
+    if (!db) throw new Error('خدمة Firebase غير مهيأة');
+    setIsSyncing(true);
+    const report = {
+      newCustomers: 0,
+      skippedCustomers: 0,
+      newTransactions: 0,
+      skippedTransactions: 0,
+      newNotifications: 0,
+      skippedNotifications: 0
+    };
+    try {
+      // 1. Always sync settings
+      if (settings) {
+        await setDoc(doc(db, 'stores', activeStoreId, 'config', 'settings'), settings, { merge: true });
+      }
+
+      // 2. Get existing customer IDs from Firebase
+      const cloudCustSnap = await getDocs(collection(db, 'stores', activeStoreId, 'customers'));
+      const cloudCustIds = new Set(cloudCustSnap.docs.map(d => d.id));
+
+      // 3. Upload only NEW customers
+      for (const cust of customers) {
+        if (!cloudCustIds.has(cust.id)) {
+          await setDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), cust);
+          report.newCustomers++;
+        } else {
+          // Update existing with merge to sync any field changes
+          await setDoc(doc(db, 'stores', activeStoreId, 'customers', cust.id), cust, { merge: true });
+          report.skippedCustomers++;
+        }
+      }
+
+      // 4. Get existing transaction IDs from Firebase
+      const cloudTxSnap = await getDocs(collection(db, 'stores', activeStoreId, 'transactions'));
+      const cloudTxIds = new Set(cloudTxSnap.docs.map(d => d.id));
+
+      // 5. Upload only NEW transactions
+      for (const tx of transactions) {
+        if (!cloudTxIds.has(tx.id)) {
+          await setDoc(doc(db, 'stores', activeStoreId, 'transactions', tx.id), tx);
+          report.newTransactions++;
+        } else {
+          report.skippedTransactions++;
+        }
+      }
+
+      // 6. Get existing notification IDs from Firebase
+      const cloudNotifSnap = await getDocs(collection(db, 'stores', activeStoreId, 'notifications'));
+      const cloudNotifIds = new Set(cloudNotifSnap.docs.map(d => d.id));
+
+      // 7. Upload only NEW notifications
+      for (const notif of notifications) {
+        if (!cloudNotifIds.has(notif.id)) {
+          await setDoc(doc(db, 'stores', activeStoreId, 'notifications', notif.id), notif);
+          report.newNotifications++;
+        } else {
+          report.skippedNotifications++;
+        }
+      }
+
+      setCloudStatus('connected');
+      setCloudError(null);
+      setLastCloudSyncTime(new Date().toLocaleTimeString('ar-IQ'));
+      const now = Date.now();
+      localStorage.setItem(getAutoSyncKey(activeStoreId), now.toString());
+      setLastAutoSyncTime(now);
+      notificationService.playChime('success');
+
+      return { success: true, ...report };
+    } catch (err) {
+      console.warn('Smart sync error:', err);
+      if (
+        err.message?.includes('PERMISSION_DENIED') ||
+        err.message?.includes('not been used in project') ||
+        err.code === 'permission-denied'
+      ) {
+        setCloudStatus('needs_activation');
+        setCloudError('قاعدة بيانات Cloud Firestore بحاجة لإنشاء وتفعيل في لوحة تحكم Firebase');
+      } else {
+        setCloudStatus('error');
+        setCloudError(err.message || 'فشلت المزامنة مع السحابة');
+      }
+      throw err;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 🔍 Scan and Remove Duplicate Customers
+  const scanAndRemoveDuplicates = async () => {
+    const nameMap = new Map(); // normalized name -> first customer
+    const duplicates = [];
+    const mergedTransactions = [];
+
+    // Sort by createdAt ascending so oldest comes first
+    const sortedCustomers = [...customers].sort(
+      (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+    );
+
+    for (const cust of sortedCustomers) {
+      const normalized = normalizeName(cust.name);
+      if (nameMap.has(normalized)) {
+        // This is a duplicate — keep the original, merge transactions
+        const original = nameMap.get(normalized);
+        duplicates.push({ duplicate: cust, originalId: original.id, originalName: original.name });
+
+        // Move transactions from duplicate to original
+        const dupTxs = transactions.filter(t => t.customerId === cust.id);
+        for (const tx of dupTxs) {
+          mergedTransactions.push({
+            ...tx,
+            customerId: original.id,
+            customerName: original.name,
+            _mergedFrom: cust.id
+          });
+        }
+      } else {
+        nameMap.set(normalized, cust);
+      }
+    }
+
+    if (duplicates.length === 0) {
+      return {
+        duplicatesFound: 0,
+        duplicatesRemoved: 0,
+        transactionsMerged: 0,
+        details: []
+      };
+    }
+
+    const dupIds = new Set(duplicates.map(d => d.duplicate.id));
+
+    // Update transactions: move from duplicate to original
+    setTransactions(prev => {
+      const updated = prev.map(tx => {
+        const merged = mergedTransactions.find(mt => mt.id === tx.id);
+        return merged || tx;
+      });
+      return updated;
+    });
+
+    // Remove duplicate customers from state
+    setCustomers(prev => prev.filter(c => !dupIds.has(c.id)));
+
+    // Recalculate debt for originals
+    const originals = new Map();
+    duplicates.forEach(d => {
+      if (!originals.has(d.originalId)) {
+        originals.set(d.originalId, nameMap.get(normalizeName(d.originalName)));
+      }
+    });
+
+    // Delete from Firebase
+    if (db) {
+      for (const dup of duplicates) {
+        try {
+          void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', dup.duplicate.id)).catch(() => {});
+          void deleteDoc(doc(db, 'customers', dup.duplicate.id)).catch(() => {});
+
+          // Delete duplicate's transactions from Firebase
+          const dupTxs = transactions.filter(t => t.customerId === dup.duplicate.id);
+          for (const tx of dupTxs) {
+            void deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', tx.id)).catch(() => {});
+          }
+        } catch (e) {}
+      }
+
+      // Re-upload merged transactions with correct customerId
+      for (const mt of mergedTransactions) {
+        try {
+          await setDoc(doc(db, 'stores', activeStoreId, 'transactions', mt.id), mt, { merge: true });
+        } catch (e) {}
+      }
+    }
+
+    notificationService.playChime('success');
+
+    return {
+      duplicatesFound: duplicates.length,
+      duplicatesRemoved: duplicates.length,
+      transactionsMerged: mergedTransactions.length,
+      details: duplicates.map(d => ({
+        removedName: d.duplicate.name,
+        removedId: d.duplicate.id,
+        mergedInto: d.originalName,
+        mergedIntoId: d.originalId
+      }))
+    };
+  };
+
+  // 📥 Download all data then clear database
+  const downloadAndClearAll = async () => {
+    // 1. Prepare full backup data
+    const backupData = {
+      version: '2.0',
+      exportDate: new Date().toISOString(),
+      storeName: settings.storeName,
+      storeId: activeStoreId,
+      storeSettings: settings,
+      customers,
+      transactions,
+      notifications,
+      totalCustomers: customers.length,
+      totalTransactions: transactions.length
+    };
+
+    // 2. Download the file
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `full_backup_${activeStoreId}_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+
+    // 3. Wait a moment to ensure download started
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // 4. Clear all local data
+    const custCount = customers.length;
+    const txCount = transactions.length;
+    await resetAllData();
+
+    // 5. Clear from Firebase too
+    if (db) {
+      try {
+        const custSnap = await getDocs(collection(db, 'stores', activeStoreId, 'customers'));
+        for (const d of custSnap.docs) {
+          void deleteDoc(doc(db, 'stores', activeStoreId, 'customers', d.id)).catch(() => {});
+        }
+        const txSnap = await getDocs(collection(db, 'stores', activeStoreId, 'transactions'));
+        for (const d of txSnap.docs) {
+          void deleteDoc(doc(db, 'stores', activeStoreId, 'transactions', d.id)).catch(() => {});
+        }
+        const notifSnap = await getDocs(collection(db, 'stores', activeStoreId, 'notifications'));
+        for (const d of notifSnap.docs) {
+          void deleteDoc(doc(db, 'stores', activeStoreId, 'notifications', d.id)).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('Firebase clear error:', e);
+      }
+    }
+
+    notificationService.playChime('success');
+    return { customersCleared: custCount, transactionsCleared: txCount };
   };
 
   // Ten-Hour Automatic Cloud Sync Scheduler
@@ -1041,9 +1331,12 @@ export const DataProvider = ({ children }) => {
         isLoadingCloudData,
         isCloudConnected: cloudStatus === 'connected',
         syncAllDataToCloud,
+        smartSyncToCloud,
         forceRefreshFromCloud,
         importStoreData,
         exportStoreData,
+        scanAndRemoveDuplicates,
+        downloadAndClearAll,
         totalDebt,
         totalCustomers,
         customersWithDebt,

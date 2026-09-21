@@ -45,6 +45,8 @@ export const CustomersPage = ({ setActivePage }) => {
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [statementCustomer, setStatementCustomer] = useState(null);
   const [deletingCustomerId, setDeletingCustomerId] = useState(null);
+  const [formError, setFormError] = useState('');
+  const [deleteResult, setDeleteResult] = useState(null);
 
   // Form State for Add / Edit
   const [formData, setFormData] = useState({
@@ -82,10 +84,15 @@ export const CustomersPage = ({ setActivePage }) => {
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
+    setFormError('');
 
-    await addCustomer(formData);
-    setFormData({ name: '', phone: '', address: '', notes: '', initialDebt: 0 });
-    setShowAddModal(false);
+    try {
+      await addCustomer(formData);
+      setFormData({ name: '', phone: '', address: '', notes: '', initialDebt: 0 });
+      setShowAddModal(false);
+    } catch (err) {
+      setFormError(err.message || 'حدث خطأ أثناء إضافة الزبون');
+    }
   };
 
   // Handle Edit Customer
@@ -371,10 +378,19 @@ export const CustomersPage = ({ setActivePage }) => {
                   type="text"
                   required
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, name: e.target.value });
+                    setFormError('');
+                  }}
                   placeholder="الاسم الكامل للزبون"
-                  className="w-full px-3.5 py-2.5 rounded-xl glass-input text-xs font-semibold"
+                  className={`w-full px-3.5 py-2.5 rounded-xl glass-input text-xs font-semibold ${formError ? 'border-rose-500 ring-1 ring-rose-500' : ''}`}
                 />
+                {formError && (
+                  <p className="text-[11px] text-rose-400 font-bold mt-1.5 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {formError}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -534,26 +550,36 @@ export const CustomersPage = ({ setActivePage }) => {
             <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 mx-auto flex items-center justify-center mb-3">
               <Trash2 className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-bold text-white">هل أنت متأكد من حذف الزبون؟</h3>
+            <h3 className="text-base font-bold text-white">حذف الزبون من جميع الأجهزة؟</h3>
             <p className="text-xs text-slate-400 mt-1.5">
-              سيتم حذف سجل الزبون وجميع الحركات المالية المرتبطة به نهائياً.
+              سيتم حذف سجل الزبون وجميع الحركات المالية والإشعارات المرتبطة به نهائياً من <strong className="text-rose-300">هذا الجهاز وجميع الأجهزة الأخرى</strong> ومن قاعدة بيانات Firebase.
             </p>
+
+            {deleteResult && (
+              <div className="mt-3 p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-[11px] text-emerald-300 font-bold">
+                ✅ تم الحذف بنجاح! تم حذف {deleteResult.deletedTransactions} حركة مالية و {deleteResult.deletedNotifications} إشعار مرتبط.
+              </div>
+            )}
 
             <div className="mt-5 flex items-center justify-center gap-3">
               <button
-                onClick={() => setDeletingCustomerId(null)}
+                onClick={() => { setDeletingCustomerId(null); setDeleteResult(null); }}
                 className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
               >
                 إلغاء
               </button>
               <button
                 onClick={async () => {
-                  await deleteCustomer(deletingCustomerId);
-                  setDeletingCustomerId(null);
+                  const result = await deleteCustomer(deletingCustomerId);
+                  setDeleteResult(result);
+                  setTimeout(() => {
+                    setDeletingCustomerId(null);
+                    setDeleteResult(null);
+                  }, 2500);
                 }}
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg"
               >
-                تأكيد الحذف
+                تأكيد الحذف من الكل
               </button>
             </div>
           </div>

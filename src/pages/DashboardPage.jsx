@@ -38,7 +38,7 @@ export const DashboardPage = ({ setActivePage }) => {
     todayCollections,
     todayDebts,
     pendingApprovalsCount,
-    syncAllDataToCloud,
+    smartSyncToCloud,
     forceRefreshFromCloud,
     isSyncing,
     lastAutoSyncTime,
@@ -52,12 +52,23 @@ export const DashboardPage = ({ setActivePage }) => {
   const handleUploadAllToFirebase = async () => {
     try {
       setUploadNotice(null);
-      const res = await syncAllDataToCloud();
-      setUploadNotice({
-        type: 'success',
-        message: `تم رفع كافة بيانات المتجر بنجاح (${res.customersCount} زبون و ${res.transactionsCount} حركة مالية)! الآن إذا سجلت الدخول من أي هاتف آخر بالمعرف (${storeId}) ستظهر البيانات كاملة فوراً.`
-      });
-      setTimeout(() => setUploadNotice(null), 8000);
+      const res = await smartSyncToCloud();
+      const parts = [];
+      if (res.newCustomers > 0) parts.push(`${res.newCustomers} زبون جديد`);
+      if (res.newTransactions > 0) parts.push(`${res.newTransactions} حركة جديدة`);
+      if (res.newNotifications > 0) parts.push(`${res.newNotifications} إشعار جديد`);
+      const skipped = res.skippedCustomers + res.skippedTransactions;
+      const newTotal = res.newCustomers + res.newTransactions + res.newNotifications;
+
+      let message = '';
+      if (newTotal === 0) {
+        message = `✅ جميع البيانات موجودة بالفعل في السحابة! لا توجد بيانات جديدة للرفع. (تم تخطي ${skipped} سجل موجود مسبقاً)`;
+      } else {
+        message = `تم رفع ${parts.join(' و ')} بنجاح إلى السحابة! (تم تخطي ${skipped} سجل موجود مسبقاً). الآن جميع الأجهزة سترى البيانات المحدثة فوراً (${storeId}).`;
+      }
+
+      setUploadNotice({ type: 'success', message });
+      setTimeout(() => setUploadNotice(null), 10000);
     } catch (err) {
       setUploadNotice({
         type: 'error',

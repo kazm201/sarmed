@@ -20,7 +20,11 @@ import {
   Cloud,
   CloudOff,
   ExternalLink,
-  ShieldAlert
+  ShieldAlert,
+  Search,
+  Trash2,
+  FileDown,
+  AlertTriangle
 } from 'lucide-react';
 import { getActiveFirebaseConfig, saveFirebaseConfig } from '../services/firebase';
 
@@ -35,11 +39,19 @@ export const SettingsPage = ({ setActivePage }) => {
     cloudStatus,
     cloudError,
     lastCloudSyncTime,
+    smartSyncToCloud,
     syncAllDataToCloud,
+    scanAndRemoveDuplicates,
+    downloadAndClearAll,
     isSyncing
   } = useData();
   const [auditResult, setAuditResult] = useState(null);
   const [syncStatusResult, setSyncStatusResult] = useState(null);
+  const [dupScanResult, setDupScanResult] = useState(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadClearResult, setDownloadClearResult] = useState(null);
+  const [showDownloadClearConfirm, setShowDownloadClearConfirm] = useState(false);
 
   // Manager Credentials Form
   const [managerName, setManagerName] = useState(settings.managerName || 'سرمد مؤيد');
@@ -428,9 +440,21 @@ export const SettingsPage = ({ setActivePage }) => {
               onClick={async () => {
                 try {
                   setSyncStatusResult(null);
-                  const res = await syncAllDataToCloud();
-                  setSyncStatusResult({ success: true, message: `تمت مزامنة ورفع ${res.count} سجل مع السحابة بنجاح!` });
-                  setTimeout(() => setSyncStatusResult(null), 5000);
+                  const res = await smartSyncToCloud();
+                  const newTotal = res.newCustomers + res.newTransactions + res.newNotifications;
+                  const skipped = res.skippedCustomers + res.skippedTransactions;
+                  let message = '';
+                  if (newTotal === 0) {
+                    message = `✅ جميع البيانات موجودة بالفعل! تم تخطي ${skipped} سجل موجود مسبقاً.`;
+                  } else {
+                    const parts = [];
+                    if (res.newCustomers > 0) parts.push(`${res.newCustomers} زبون`);
+                    if (res.newTransactions > 0) parts.push(`${res.newTransactions} حركة`);
+                    if (res.newNotifications > 0) parts.push(`${res.newNotifications} إشعار`);
+                    message = `تم رفع ${parts.join(' و ')} جديد بنجاح! (تم تخطي ${skipped} موجود)`;
+                  }
+                  setSyncStatusResult({ success: true, message });
+                  setTimeout(() => setSyncStatusResult(null), 8000);
                 } catch (err) {
                   setSyncStatusResult({ success: false, message: err.message || 'فشلت المزامنة' });
                 }
@@ -438,7 +462,7 @@ export const SettingsPage = ({ setActivePage }) => {
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 font-bold text-xs transition-all active:scale-95"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'جاري المزامنة مع السحابة...' : 'مزامنة ورفع جميع البيانات إلى السحابة الآن'}</span>
+              <span>{isSyncing ? 'جاري الرفع الذكي...' : 'رفع البيانات الجديدة فقط إلى السحابة'}</span>
             </button>
 
             {syncStatusResult && (
@@ -554,6 +578,37 @@ export const SettingsPage = ({ setActivePage }) => {
             </label>
           </div>
         </div>
+
+        {/* Download All + Clear Database */}
+        <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-800/40 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400 mt-0.5">
+              <FileDown className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-white">تحميل قاعدة البيانات بالكامل ثم مسحها</h4>
+              <p className="text-[11px] text-slate-400 mt-1">
+                يقوم بتحميل جميع بيانات الزبائن والحركات والإشعارات على جهازك، ثم يمسح القاعدة بالكامل من هذا الجهاز ومن Firebase.
+              </p>
+            </div>
+          </div>
+
+          {downloadClearResult && (
+            <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-[11px] text-emerald-300 font-bold">
+              ✅ تم تحميل ومسح {downloadClearResult.customersCleared} زبون و {downloadClearResult.transactionsCleared} حركة مالية بنجاح!
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowDownloadClearConfirm(true)}
+            disabled={isDownloading || customers.length === 0}
+            className="w-full py-2.5 px-4 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+          >
+            <FileDown className={`w-4 h-4 ${isDownloading ? 'animate-pulse' : ''}`} />
+            <span>{isDownloading ? 'جاري التحميل والمسح...' : `تحميل ومسح القاعدة (${customers.length} زبون و ${transactions.length} حركة)`}</span>
+          </button>
+        </div>
       </div>
       {/* Section 5: Safe Statistics Reset & Audit (No customer deletion) */}
       <div className="glass-panel rounded-3xl p-6 border-2 border-amber-800/60 space-y-4 bg-gradient-to-br from-amber-950/20 to-slate-900">
@@ -594,6 +649,133 @@ export const SettingsPage = ({ setActivePage }) => {
           )}
         </div>
       </div>
+
+      {/* Section 6: Duplicate Scanner */}
+      <div className="glass-panel rounded-3xl p-6 border-2 border-teal-800/60 space-y-4 bg-gradient-to-br from-teal-950/20 to-slate-900">
+        <h3 className="text-sm font-bold text-teal-400 flex items-center gap-2 pb-3 border-b border-teal-900/40">
+          <Search className="w-4 h-4" />
+          <span>6. فحص وحذف الأسماء المكررة من قاعدة البيانات</span>
+        </h3>
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <p className="text-xs text-slate-200 font-semibold">
+              فحص شامل لجميع أسماء الزبائن وحذف المكرر منها تلقائياً
+            </p>
+            <p className="text-[11px] text-slate-400 mt-1">
+              يفحص النظام كل الزبائن ويحذف الأسماء المكررة مع دمج حركاتهم المالية مع الاسم الأصلي، ويحذفهم من Firebase.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={isScanning}
+            onClick={async () => {
+              setIsScanning(true);
+              setDupScanResult(null);
+              try {
+                const result = await scanAndRemoveDuplicates();
+                setDupScanResult(result);
+              } catch (e) {
+                setDupScanResult({ error: e.message });
+              } finally {
+                setIsScanning(false);
+              }
+            }}
+            className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-teal-600/20 hover:bg-teal-600/40 text-teal-300 border border-teal-500/50 font-black text-xs transition-all active:scale-95 shadow-lg disabled:opacity-60"
+          >
+            <Search className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
+            <span>{isScanning ? 'جاري الفحص...' : 'فحص وحذف المكررات'}</span>
+          </button>
+        </div>
+
+        {/* Duplicate Scan Report */}
+        {dupScanResult && !dupScanResult.error && (
+          <div className={`p-4 rounded-2xl border ${dupScanResult.duplicatesFound > 0 ? 'bg-emerald-950/40 border-emerald-500/40' : 'bg-slate-900/60 border-slate-700'} space-y-3`}>
+            <h4 className="text-xs font-bold text-white flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>تقرير فحص المكررات</span>
+            </h4>
+            <div className="space-y-1.5 text-[11px]">
+              <p className="text-slate-300">عدد المكررات المكتشفة: <strong className="text-white">{dupScanResult.duplicatesFound}</strong></p>
+              <p className="text-slate-300">عدد المكررات المحذوفة: <strong className="text-emerald-400">{dupScanResult.duplicatesRemoved}</strong></p>
+              <p className="text-slate-300">الحركات المالية المدموجة: <strong className="text-teal-400">{dupScanResult.transactionsMerged}</strong></p>
+            </div>
+
+            {dupScanResult.details && dupScanResult.details.length > 0 && (
+              <div className="mt-2 space-y-1.5 max-h-40 overflow-y-auto">
+                <p className="text-[10px] text-slate-400 font-bold">تفاصيل الحذف:</p>
+                {dupScanResult.details.map((d, i) => (
+                  <div key={i} className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[10px]">
+                    <span className="text-rose-300">حُذف:</span> <span className="text-white font-bold">{d.removedName}</span>
+                    <span className="text-slate-500 mx-1">→</span>
+                    <span className="text-emerald-300">دُمج مع:</span> <span className="text-white font-bold">{d.mergedInto}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {dupScanResult.duplicatesFound === 0 && (
+              <p className="text-emerald-300 text-xs font-bold">✅ لا توجد أسماء مكررة! قاعدة البيانات نظيفة.</p>
+            )}
+          </div>
+        )}
+
+        {dupScanResult?.error && (
+          <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs font-bold">
+            ❌ خطأ: {dupScanResult.error}
+          </div>
+        )}
+      </div>
+
+      {/* Download + Clear Confirmation Modal */}
+      {showDownloadClearConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border-2 border-rose-600/60 p-6 shadow-2xl space-y-4">
+            <div className="flex flex-col items-center text-center gap-3">
+              <div className="w-14 h-14 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center">
+                <AlertTriangle className="w-7 h-7" />
+              </div>
+              <h3 className="text-base font-black text-white">تأكيد التحميل والمسح الكامل</h3>
+              <p className="text-xs text-slate-300">
+                سيتم <strong className="text-emerald-400">تحميل نسخة كاملة</strong> من قاعدة البيانات على جهازك، ثم <strong className="text-rose-400">مسح جميع البيانات نهائياً</strong> من هذا الجهاز ومن Firebase.
+                <br />
+                <span className="text-rose-300 font-bold mt-1 block">⚠️ هذا الإجراء غير قابل للتراجع! تأكد من حفظ الملف المحمل.</span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowDownloadClearConfirm(false)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:bg-slate-700 transition-all"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={isDownloading}
+                onClick={async () => {
+                  setIsDownloading(true);
+                  try {
+                    const result = await downloadAndClearAll();
+                    setDownloadClearResult(result);
+                    setShowDownloadClearConfirm(false);
+                    setTimeout(() => setDownloadClearResult(null), 8000);
+                  } catch (e) {
+                    alert('حدث خطأ أثناء العملية: ' + e.message);
+                  } finally {
+                    setIsDownloading(false);
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-black text-xs transition-all active:scale-95"
+              >
+                {isDownloading ? 'جاري...' : 'تحميل ومسح الكل'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reset Confirmation Modal */}
       {showResetModal && (
